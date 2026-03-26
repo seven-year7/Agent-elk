@@ -91,7 +91,7 @@ Myself/
 │   ├── core/             # Agent 核心逻辑 (ReAct 循环)
 │   │   ├── config.py     # Phase 2.7：MAIN_LLM_TEMPERATURE、DEFAULT_LLM_MODEL
 │   │   ├── gateway.py    # Phase 2.14：多级智能网关（关键词直通 / 相似度阈值 / 普通聊天）
-│   │   ├── router.py     # Phase 2.18：三票制意图路由（关键词未命中时 LOG/CHAT）
+│   │   ├── router.py     # Phase 2.24：单模型意图路由（关键词未命中时 LOG/CHAT，取消投票）
 │   │   └── agent_brain.py # ELKAgent：kNN 日志上下文 + LLM 诊断；可 python -m app.core.agent_brain
 │   ├── tools/            # 工具集 (ES 客户端, DSL 生成器)
 │   │   ├── config.py     # Phase 2.7：ES_DEFAULT_URL、SEARCH_LOGS_DEFAULT_TOP_K、kNN 候选参数

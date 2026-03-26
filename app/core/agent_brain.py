@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from app.core.config import DEFAULT_LLM_MODEL, MAIN_LLM_TEMPERATURE, OPS_DIRECT_KEYWORDS
-from app.core.router import IntentVoter
+from app.core.router import IntentRouter
 from app.memory.manager import memory_bus
 from app.prompts.templates import ANALYSIS_PROMPT_TMPL, SYSTEM_PROMPT
 from app.tools.config import SEARCH_LOGS_DEFAULT_TOP_K
@@ -90,7 +90,7 @@ class ELKAgent:
         self._model = _resolve_llm_model()
         # @Step: 2b - 系统提示外置至 app/prompts/templates.py（Phase 2.2 解耦）
         self._system_prompt = SYSTEM_PROMPT
-        self._intent_voter = IntentVoter()
+        self._intent_router = IntentRouter()
 
     def chat(self, user_input: str, thread_id: str | None = None) -> str:
         # @Step: 3 - 网关 ->（可选 ES 检索）-> 推理；temperature 压低以降低胡编风险
@@ -140,14 +140,8 @@ class ELKAgent:
                 "请结合以上新证据和历史背景分析，给出根因判断与下一步排查/修复建议。"
             )
         else:
-            # 第二级：三票制意图识别（No ES / No RAG）
-            try:
-                intent = self._intent_voter.get_consensus(
-                    text, thread_id=effective_thread_id, memory_manager=memory_bus
-                )
-            except Exception as exc:
-                logger.warning("[WARN][AgentBrain]: IntentVoter 执行失败，回退 CHAT：%s", exc)
-                intent = "CHAT"
+            # 第二级：单模型意图识别（No ES / No RAG）
+            intent = self._intent_router.judge_intent(text, summary_text, short_history)
 
             if intent == "LOG":
                 print("📋 [LOG_FOLLOW_UP] 运维追问模式，利用内存中的日志记录回答...")
