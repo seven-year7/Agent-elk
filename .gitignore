@@ -1,0 +1,11 @@
+# 本地密钥与覆盖（与 README §6 一致）
+.env
+
+# Phase 2.6：对话记忆持久化（可能含敏感内容）
+config/memory_state.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

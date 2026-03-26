@@ -1,0 +1,10 @@
+# 与 README「§2 技术选型」及「§6 配置与环境变量」对齐；版本可按环境收紧
+# 向量嵌入：经 OpenRouter 时使用 openai 包 + OPENROUTER_API_KEY / OPENROUTER_BASE_URL，无单独 openrouter SDK
+# ES 连接：api_key / basic_auth 为客户端内置；TLS 通过 ES_CA_CERTS、ES_VERIFY_CERTS 配置，无新增包
+# IK 分词（ik_smart）在 ES 服务端安装 analysis-ik，非 pip 包
+elasticsearch>=8.10.0,<9
+langchain-core>=0.2.0
+langgraph>=0.2.0
+openai>=1.0.0
+python-dotenv>=1.0.0
+redis>=5
