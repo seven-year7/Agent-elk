@@ -89,5 +89,10 @@ def get_es_client(auth: AuthInfo) -> Elasticsearch:
     @Agent_Logic: 客户端按 (ES_URL, Authorization) 维度缓存，避免每次请求重建连接池。
     """
     es_url = _env_str("MCP_ES_URL") or _env_str("ES_URL") or "http://localhost:9200"
+    logger.info(
+        "[INFO][McpESProvider]: select_client es_url=%s auth_from_request=%s",
+        es_url,
+        bool(auth.authorization_header),
+    )
     return _build_base_client(es_url, auth.authorization_header)
 

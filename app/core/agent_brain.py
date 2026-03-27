@@ -103,6 +103,19 @@ class ELKAgent:
     def _tool_calling_chat(self, user_input: str, *, thread_id: str) -> OrchestratorResult:
         base_context = memory_bus.get_context(thread_id=thread_id)
         messages: list[dict[str, object]] = [{"role": "system", "content": self._system_prompt}]
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "RAG 增强执行约束（必须遵守）：\n"
+                    "1) 先通过 queryByTimeRange/queryByRequestId/executeDsl 拿到日志事实（LogFacts）。\n"
+                    "2) 再调用 queryKnowledgeBaseHybrid，优先传入 errorTitle/symptom/suspectedRootCause/logExcerpt/"
+                    "candidateResolution（mcp_summary_only），可附带 serviceName/errorCode 过滤。\n"
+                    "3) 回答时必须分区：先写【LogFacts】，再写【KBEvidence】，最后写【DiagnosisAndActions】。\n"
+                    "4) 若 LogFacts 与 KBEvidence 不一致，以 LogFacts 为准，并在结论中说明不一致点。"
+                ),
+            }
+        )
         messages.extend(base_context[-6:])  # 控制 token
         messages.append({"role": "user", "content": user_input})
         return self._orchestrator.run(messages=messages)

@@ -36,7 +36,7 @@ class ToolCallingOrchestrator:
         llm_model: str,
         registry: ToolRegistry,
         temperature: float,
-        max_tool_rounds: int = 5,
+        max_tool_rounds: int = 3,
     ) -> None:
         self._llm_client = llm_client
         self._llm_model = llm_model
@@ -54,7 +54,23 @@ class ToolCallingOrchestrator:
         collected_tool_errors: list[dict[str, str]] = []
         executed_dsls: list[str] = []
         dsl_rewrite_retries = 0
+        force_simple_dsl_mode = False
+        simple_dsl_hint_injected = False
         for round_idx in range(self._max_tool_rounds):
+            if force_simple_dsl_mode and not simple_dsl_hint_injected:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "你在 executeDsl 上已连续出现 2 次 DSL 错误。"
+                            "从现在开始，禁止使用 aggs/sort/script/range/bool 嵌套。"
+                            "请仅使用最简单的关键词查询：query.match（必要时 match_phrase），"
+                            "并返回可直接执行的最小 DSL。"
+                        ),
+                    }
+                )
+                simple_dsl_hint_injected = True
+
             resp = None
             for retry_idx in range(self._max_llm_network_retries + 1):
                 try:
@@ -157,16 +173,10 @@ class ToolCallingOrchestrator:
 
                         if needs_dsl_rewrite:
                             dsl_rewrite_retries += 1
-                            if dsl_rewrite_retries > self._max_dsl_rewrite_retries:
-                                return OrchestratorResult(
-                                    answer=(
-                                        "DSL 重写重试已达上限（2）。请收窄查询范围，"
-                                        "并明确字段名/字段类型后重试。"
-                                    ),
-                                    rounds_used=round_idx + 1,
-                                    tool_errors=collected_tool_errors,
-                                    executed_dsls=executed_dsls,
-                                )
+                            if dsl_rewrite_retries >= self._max_dsl_rewrite_retries:
+                                # @Agent_Logic: 连续 2 次 DSL 失败后不再让模型生成复杂聚合，
+                                # 强制降级为简单关键词 match 查询，提升可执行成功率。
+                                force_simple_dsl_mode = True
 
                 messages.append(
                     {
@@ -177,7 +187,7 @@ class ToolCallingOrchestrator:
                 )
 
         return OrchestratorResult(
-            answer="工具调用轮数已达上限（5）。请缩小时间范围、明确索引名或提供 requestId 以继续排查。",
+            answer="工具调用轮数已达上限（3）。请缩小时间范围、明确索引名或提供 requestId 以继续排查。",
             rounds_used=self._max_tool_rounds,
             tool_errors=collected_tool_errors,
             executed_dsls=executed_dsls,

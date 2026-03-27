@@ -156,5 +156,42 @@ Output:
             args["dsl"] = json.dumps(dsl_val, ensure_ascii=False)
         return mcp.call_tool("executeDsl", args)
 
+    @tool(
+        registry=registry,
+        name="queryKnowledgeBaseHybrid",
+        schema={
+            "type": "function",
+            "function": {
+                "name": "queryKnowledgeBaseHybrid",
+                "description": (
+                    "知识库混合检索（BM25+向量）。用于在日志分析后补充 SOP 与历史案例证据。"
+                    "推荐使用 mcp_summary_only 模式：传入 errorTitle/symptom/suspectedRootCause/logExcerpt/candidateResolution，"
+                    "服务端会构造摘要查询文本并执行 hybrid 召回。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "errorTitle": {"type": "string"},
+                        "symptom": {"type": "string"},
+                        "suspectedRootCause": {"type": "string"},
+                        "logExcerpt": {"type": "string"},
+                        "candidateResolution": {"type": "string"},
+                        "serviceName": {"type": "string"},
+                        "errorCode": {"type": "string"},
+                        "indexName": {"type": "string"},
+                        "topK": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20},
+                        "candidateK": {"type": "integer", "default": 30, "minimum": 5, "maximum": 200},
+                        "bm25MinScore": {"type": "number", "default": 0.1},
+                        "vectorMinScore": {"type": "number", "default": 0.7},
+                    },
+                    "required": [],
+                },
+            },
+        },
+    )
+    def _query_knowledge_base_hybrid(args: dict[str, Any]) -> dict[str, Any]:
+        return mcp.call_tool("queryKnowledgeBaseHybrid", args)
+
     return registry
 

@@ -40,5 +40,6 @@ ToolName = Literal[
     "executeDsl",
     "queryByRequestId",
     "queryByIamId",
+    "queryKnowledgeBaseHybrid",
 ]
 

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -18,6 +19,7 @@ from app.mcp_server.tools_core import (
     handle_query_by_time_range,
 )
 from app.mcp_server.tools_hera import handle_query_by_iam_id, handle_query_by_request_id
+from app.mcp_server.tools_kb import handle_query_knowledge_base_hybrid
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ async def call_tool(tool_name: ToolName, request: Request) -> dict[str, Any]:
     @Security: 不在服务端日志输出 Authorization 头；只记录 tool_name。
     """
     try:
+        raw_body = await request.body()
         payload = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
@@ -43,7 +46,9 @@ async def call_tool(tool_name: ToolName, request: Request) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Body must be an object")
 
-    logger.info("[INFO][MCPServer]: tool_called=%s", tool_name)
+    raw_sha8 = hashlib.sha256(raw_body).hexdigest()[:8]
+    payload_len = len(raw_body)
+    logger.info("[INFO][MCPServer]: tool_called=%s payload_bytes=%s payload_sha8=%s", tool_name, payload_len, raw_sha8)
 
     auth = resolve_authorization_header(request.headers.get("authorization"))
     logger.info("[INFO][MCPServer]: auth_type=%s", auth.auth_type)
@@ -60,6 +65,9 @@ async def call_tool(tool_name: ToolName, request: Request) -> dict[str, Any]:
         return resp.model_dump()
     if tool_name == "queryByIamId":
         resp = handle_query_by_iam_id(auth, payload)
+        return resp.model_dump()
+    if tool_name == "queryKnowledgeBaseHybrid":
+        resp = handle_query_knowledge_base_hybrid(auth, payload)
         return resp.model_dump()
 
     resp = ToolResponse(tool=str(tool_name), request={"tool": tool_name}, hits=[], errors=[])

@@ -2,6 +2,7 @@
 # 向量嵌入：经 OpenRouter 时使用 openai 包 + OPENROUTER_API_KEY / OPENROUTER_BASE_URL，无单独 openrouter SDK
 # ES 连接：api_key / basic_auth 为客户端内置；TLS 通过 ES_CA_CERTS、ES_VERIFY_CERTS 配置，无新增包
 # IK 分词（ik_smart）在 ES 服务端安装 analysis-ik，非 pip 包
+# 知识库 RAG（BM25+向量）复用现有依赖：elasticsearch + openai + pandas + requests
 elasticsearch>=8.10.0,<9
 fastapi>=0.110
 langchain-core>=0.2.0

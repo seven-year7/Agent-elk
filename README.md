@@ -1,5 +1,5 @@
 # ELK-Agent 智能体：架构设计与实现全手册
-**版本:** v1.0 (2026-03-24)
+**版本:** v1.1 (2026-03-26)
 **角色:** Agent 架构师 (Gemini) & 首席开发工程师 (User)
 
 ---
@@ -11,12 +11,12 @@
 
 ---
 
-## 2. 技术选型 (Stack)
+## 2. 技术选型 (Stack, 与当前代码对齐)
 | 组件           | 选型                            | 作用                                    |
 | :------------- | :------------------------------ | :-------------------------------------- |
-| **推理大脑**   | Gemini 3 Flash / GPT-4o         | 逻辑推理、意图识别、DSL 生成            |
-| **存储/检索**  | Elasticsearch 8.10+             | 向量存储、BM25 全文检索、混合搜索 (RRF) |
-| **Agent 框架** | LangGraph / LangChain           | 状态机管理、ReAct 循环实现              |
+| **推理大脑**   | OpenAI SDK + OpenRouter/OpenAI 兼容接口 | 逻辑推理、工具选择、诊断输出 |
+| **存储/检索**  | Elasticsearch 8.10+             | 日志检索、知识库 BM25+向量混合检索 (RRF) |
+| **Agent 编排** | 自研 ToolCallingOrchestrator    | `tool_choice="auto"` 多轮工具调用与回喂 |
 | **向量模型**   | OpenRouter 路由 `openai/text-embedding-3-small`（或同维替代） | 日志语义向量化（OpenAI 兼容 Embeddings API） |
 | **语言/环境**  | Python 3.10+                    | 核心开发语言                            |
 
@@ -29,15 +29,16 @@
 - **处理：** 实时向量化并存入 ES，支持 `dense_vector` 字段。
 
 ### 3.2 认知层 (Reasoning)
-- **意图路由：** 区分“统计需求”、“单点查错”还是“趋势预测”。
-- **Text-to-DSL：** 将自然语言转义为复杂的 ES Query (DSL)。
-- **自我修正：** 若查询失败，Agent 根据报错信息自动重写 Query。
+- **工具选择：** 主链路由模型在 `queryByTimeRange/queryByRequestId/executeDsl/queryKnowledgeBaseHybrid` 中自动选择。
+- **Text-to-DSL：** 通过 `executeDsl` 工具让模型生成 DSL（字符串），服务端校验后执行。
+- **自我修正：** 当 `executeDsl` 返回 `DSL_FIELD_TYPE_MISMATCH/DSL_NOT_ALLOWED/INVALID_DSL_JSON` 时，编排器最多重写 2 次。
 
 ### 3.3 行动层 (Action)
-- **工具箱 (Toolkits)：**
-    - `search_logs`: 语义+关键字混合检索。
-    - `get_metrics`: 调用 Prometheus 或 ES 指标聚合。
-    - `alert_notify`: 触发 Webhook 告警。
+- **MCP 工具箱（当前已接入）：**
+    - `queryByTimeRange`: 时间范围日志检索（绝对时间或 `lastMinutes/lastHours`）。
+    - `queryByRequestId`: `requestId + serviceName` 精确链路查询。
+    - `executeDsl`: 执行经 allowlist/type-check 校验的 DSL。
+    - `queryKnowledgeBaseHybrid`: 知识库 BM25+向量混合召回与 RRF 融合。
 
 ### 3.4 交互层 (Interaction)
 - **接口：** 命令行工具 (CLI)、Web 聊天窗口或 Kibana 插件。
@@ -88,22 +89,25 @@ Myself/
 │   │   ├── config.py     # TURN_LIMIT、TOKEN 阈值、SUMMARY_MODEL、MEMORY_STORAGE_PATH 等默认项
 │   │   ├── manager.py    # MemoryManager / memory_bus（Redis Hash 读写与摘要压缩）
 │   │   └── redis_store.py # RedisMemoryStore（Hash 字段级存取封装）
-│   ├── core/             # Agent 核心逻辑 (ReAct 循环)
+│   ├── core/             # Agent 核心逻辑（主链路：tool-calling）
 │   │   ├── config.py     # Phase 2.7：MAIN_LLM_TEMPERATURE、DEFAULT_LLM_MODEL
-│   │   ├── gateway.py    # Phase 2.14：多级智能网关（关键词直通 / 相似度阈值 / 普通聊天）
-│   │   ├── router.py     # Phase 2.24：单模型意图路由（关键词未命中时 LOG/CHAT，取消投票）
-│   │   └── agent_brain.py # ELKAgent：kNN 日志上下文 + LLM 诊断；可 python -m app.core.agent_brain
-│   ├── tools/            # 工具集 (ES 客户端, DSL 生成器)
+│   │   ├── gateway.py    # 历史网关实现（当前主流程默认不走该文件）
+│   │   ├── router.py     # 历史意图路由实现（当前主流程默认不走该文件）
+│   │   └── agent_brain.py # ELKAgent：system prompt + tool-calling 编排入口
+│   ├── tools/            # 历史工具层（MCP 上线后主链路通常不直接调用）
 │   │   ├── config.py     # Phase 2.7：ES_DEFAULT_URL、SEARCH_LOGS_DEFAULT_TOP_K、kNN 候选参数
 │   │   ├── es_client.py  # ESNervousSystem / es_node：连接、init_index、push_log
-│   │   └── log_tools.py  # search_logs_tool / es_search_tool：kNN 语义检索日志
+│   │   └── log_tools.py  # 历史 ES 工具实现（保留兼容）
 │   ├── schema/           # ES Mapping 定义 (Json/Python)
 │   │   └── log_schema.py # intelligent_logs_v1：message 使用 IK ik_smart
-│   ├── database/         # （新增）数据接入与入库层：Mapping / Loader / Vector Service（新骨架）
-│   │   ├── schema.py      # 定义 ES Mapping（索引结构）（与 app/schema/ 目前存在职责重叠，后续可迁移统一）
-│   │   ├── loader.py      # 负责 CSV/PDF 的加载与清洗（占位骨架）
-│   │   └── vector_service.py # 负责向量化（Embedding）与批量入库（占位骨架）
-│   └── utils/            # Embedding 工具, 时间解析器
+│   ├── database/         # 知识库数据接入层：Mapping / Loader / Embedding
+│   │   ├── schema.py      # 知识库索引 `elk_agent_knowledge_base` Mapping
+│   │   ├── loader.py      # CSV 入库脚本（含索引初始化与 bulk）
+│   │   └── vector_service.py # Embedding 生成
+│   ├── mcp_client/       # Agent -> MCP Server HTTP 客户端
+│   ├── mcp_server/       # FastAPI MCP Server 与工具实现
+│   ├── tool_calling/     # 工具注册与编排器（主链路）
+│   └── utils/            # 通用工具（含 embedding 工具）
 │       └── embedding.py  # EmbeddingGenerator / embedder（OpenAI 兼容嵌入）
 ├── app/data/             # （新增）原始数据目录（例如 elk_error_logs_100.csv）
 ├── config/               # （遗留）memory_state.json；Phase 2.9 起由 Redis 替代（保留兼容回退）
@@ -188,14 +192,15 @@ python -m uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8000
 ### 6.0.4 Agent 执行流（检索链路）
 
 - **Tool-calling loop（推荐主链路）**：由 OpenRouter LLM 自动选择工具，程序负责调用 MCP 并回喂结果，直到模型输出最终 RCA。
-- 可用工具：`queryByTimeRange` / `queryByRequestId` / `executeDsl`
+- 可用工具：`queryByTimeRange` / `queryByRequestId` / `executeDsl` / `queryKnowledgeBaseHybrid`
 - `queryByTimeRange` 支持两种时间入参：`startTime + endTime`（绝对时间）或 `lastMinutes/lastHours`（相对时间，服务端按真实当前时间换算），用于稳定“最近日志”检索。
-- `queryByRequestId` 已改为直连 ES：必填 `requestId + serviceName`（匹配字段 `servicename`），可选 `indexName/level/size`，不再依赖 Hera。
+- `queryByRequestId` 当前实现为直连 ES：必填 `requestId + serviceName`，可选 `indexName/level/size`。
 - 当工具返回 `errors` 时，Agent 会在最终答复前优先透传工具原始错误（tool/code/message），降低模型误判概率。
 - `executeDsl` 采用 **DSL 双层防线**：
   - 生成前：工具描述明确要求按目标索引实时 mapping 生成字段与子字段。
   - 执行前：MCP Server 拉取并缓存 mapping，按字段类型做语义校验（如 `term/match/range/aggs.terms`）。
   - 失败后：若返回 `DSL_FIELD_TYPE_MISMATCH` / `DSL_NOT_ALLOWED` / `INVALID_DSL_JSON`，编排器会把错误回喂模型触发 DSL 重写，最多 2 次。
+- `queryKnowledgeBaseHybrid`：知识库混合召回（BM25 + 向量 + RRF），用于在日志事实之后补充 SOP/案例证据，提升 RCA 准确率与可执行性。
 - 核心原则：**工具选择权在模型**，代码不再做复杂路由器来决定调用哪个工具
 ## 6.1 模型连通性测试（小模型 vs 大模型）
 
@@ -236,7 +241,67 @@ python test/test_es_tls_certificate.py
 
 **Phase 2.1（Agent 工具层）：** `app/tools/log_tools.py` 提供 `search_logs_tool`（别名 `es_search_tool`）用于日志检索（MCP 链路下通常由 `executeDsl`/`queryByTimeRange` 完成）。完整 Thought → Action → Observation 循环可在 `app/core` 用 LangGraph / 自研循环衔接。
 
-**Phase 2.1（续，大脑与入口）：** `app/core/agent_brain.py` 中 **`ELKAgent`** 采用 MCP tool-calling 流程，由模型在 `queryByTimeRange / queryByRequestId / executeDsl` 间自主选择，再综合证据生成诊断。对话客户端优先 **`OPENROUTER_API_KEY`** + **`OPENROUTER_BASE_URL`**（默认 `https://openrouter.ai/api/v1`），否则使用 **`OPENAI_API_KEY`**（可选 **`OPENAI_BASE_URL`**）。**交互入口（Phase 2.1.3）：** **`python main.py`** — 运维对话式 CLI；亦可 `python -m app.core.agent_brain`（内置 REPL）；或在代码中 `from app.core.agent_brain import agent` 后调用 `agent.chat("你的问题")`。
+**Phase 2.1（续，大脑与入口）：** `app/core/agent_brain.py` 中 **`ELKAgent`** 采用 MCP tool-calling 流程，由模型在 `queryByTimeRange / queryByRequestId / executeDsl / queryKnowledgeBaseHybrid` 间自主选择，并执行“日志事实 + 知识证据”的 RAG 增强分析。对话客户端优先 **`OPENROUTER_API_KEY`** + **`OPENROUTER_BASE_URL`**（默认 `https://openrouter.ai/api/v1`），否则使用 **`OPENAI_API_KEY`**（可选 **`OPENAI_BASE_URL`**）。**交互入口（Phase 2.1.3）：** **`python main.py`** — 运维对话式 CLI；亦可 `python -m app.core.agent_brain`（内置 REPL）；或在代码中 `from app.core.agent_brain import agent` 后调用 `agent.chat("你的问题")`。
+
+## 6.3 知识库向量化入库与校验（与当前实现对齐）
+
+知识库源文件：`app/data/standardized_ops_knowledge_base.csv`  
+默认知识库索引：`elk_agent_knowledge_base`
+
+入库前建议先确认 MCP/ES 配置可用，再执行：
+
+```bash
+python ingest_standardized_ops_kb.py --dry-run --limit 5
+python ingest_standardized_ops_kb.py
+```
+
+入库后验证（文档数量、`content_vector` 存在率、维度一致性）：
+
+```bash
+python test/test_standardized_ops_kb_ingest.py
+```
+
+RAG 业务召回评测（不使用 ID 命中率）：
+
+```bash
+python test/eval_rag_business_recall.py --limit 30
+```
+
+指标定义：
+- `topk_category_recall`：TopK 中是否命中同 `error_code` 或同故障类别（业务相关召回）
+- `topk_executable_hit_rate`：TopK 中是否包含可执行处置与验证步骤（`resolution_steps` + `verification_steps`）
+- `evidence_consistency_rate`：TopK 证据是否与日志关键信号一致（`service_name` 或 `error_code`）
+
+分析原则：
+- 先给 `LogFacts`（MCP 日志事实），再给 `KBEvidence`（RAG 证据），最后给结论与处置；
+- 若两者不一致，以日志事实为准并显式说明冲突点。
+
+`queryKnowledgeBaseHybrid` 检索策略参数（调优）：
+- `topK`：最终返回条数（默认 5）
+- `candidateK`：BM25/向量各自候选池（默认 30，自动保证 `candidateK >= topK`）
+- `bm25MinScore`：BM25 分数阈值（默认 0.1，>0 时过滤低分项）
+- `vectorMinScore`：向量分数阈值（默认 0.7，>0 时过滤低分项）
+- `strictFilter`：是否将 `serviceName/errorCode` 作为硬过滤（默认 `false`，默认仅作为软约束加权）
+- `debug`：按请求开启检索诊断摘要（默认 `false`，仅回传 DSL 结构摘要/命中统计，不回传敏感全文）
+- 空检索快速退出：当 BM25 与向量候选都为空时，直接返回空结果并标注 `empty retrieval fast exit`
+
+当前知识库分类字段状态（重要）：
+- 数据源 CSV 中存在 `category_l1/l2/l3` 字段；
+- 但 `app/database/schema.py` 当前 Mapping 未定义这些字段；
+- `queryKnowledgeBaseHybrid` 也未基于 `category_l1/l2/l3` 做过滤或加权。
+- 结论：**`case / error_code / sop` 三级分类尚未真正接入线上检索链路**。
+
+Hybrid 零召回排查建议（编码与链路）：
+- 先确认 Agent→MCP 使用 UTF-8 JSON：客户端固定 `Content-Type: application/json; charset=utf-8`，服务端日志会记录 `payload_sha8/payload_bytes` 用于端到端一致性对比。
+- 对 `queryKnowledgeBaseHybrid` 开启 `debug=true`（或环境变量 `MCP_KB_DEBUG=true`），观察返回中的 `debugDetails`：
+  - `clientSource`：当前命中来自 MCP 主客户端还是 `ES_URL` fallback。
+  - `indexVisibleInPrimary/indexVisibleInEffective`：索引可见性是否一致。
+  - `denseQuerySha8/sparseQuerySha8` 与长度：确认中文摘要是否在链路中被破坏。
+  - `bm25DslShape/vectorDslShape`：确认双检索路径都被执行。
+- 当前在线检索采用“双 query 策略”：
+  - BM25 使用 `sparseQueryText`（更短关键词串，降低模板噪音）；
+  - 向量检索使用 `summaryQueryText`（对齐离线向量语义：`title + symptom + root_cause + content + resolution_steps`）。
+- 若 `errors` 含 `EMPTY_RETRIEVAL_EXECUTED_NO_HITS`，代表“执行成功但无命中”；若含 `EMPTY_RETRIEVAL_EMBEDDING_FAILED`，优先检查 embedding 配置。
 
 **Phase 2.2（提示词解耦）：** 系统角色与用户侧「检索结果 + 问题」缝合模板迁至 **`app/prompts/`**，便于独立迭代提示词工程；`INTENT_EXTRACT_TMPL` 供后续结构化意图抽取使用。
 
