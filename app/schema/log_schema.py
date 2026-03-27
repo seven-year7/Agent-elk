@@ -1,6 +1,6 @@
 """
  * @Module: app/schema/log_schema
- * @Description: 智能日志索引名称与 Elasticsearch Mapping（IK 全文 + dense_vector 语义）
+ * @Description: 智能日志索引名称与 Elasticsearch Mapping（IK 全文）
  * @Interface: LOG_INDEX_NAME, INDEX_MAPPING
 """
 
@@ -21,17 +21,6 @@ INDEX_MAPPING = {
                 "analyzer": "ik_smart",
                 "fields": {
                     "keyword": {"type": "keyword", "ignore_above": 256},
-                },
-            },
-            "message_embedding": {
-                "type": "dense_vector",
-                "dims": 1536,
-                "index": True,
-                "similarity": "cosine",
-                "index_options": {
-                    "type": "int8_hnsw",
-                    "m": 16,
-                    "ef_construction": 100,
                 },
             },
         },

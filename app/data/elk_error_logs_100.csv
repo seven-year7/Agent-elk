@@ -1,0 +1,101 @@
+title,content,servicename,error_code,tags,timestamp,sessionid
+Redis Connection Refused,Could not connect to Redis at 172.16.0.45:6379. Connection refused.,inventory-service,REDIS_001,"redis,infrastructure,cache",2026-03-26T22:27:00Z,sess-8953-5907
+Broken Pipe,java.io.IOException: Broken pipe. The client closed the connection prematurely.,auth-service,NET_005,"network,io,broken-pipe",2026-03-26T14:59:00Z,sess-3464-5231
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.saveTransaction does not exist in version 3.12.0.,api-gateway,DEP_001,"java,dependency,build",2026-03-26T07:58:00Z,sess-1343-2720
+Redis Connection Refused,Could not connect to Redis at 172.16.0.45:6379. Connection refused.,db-proxy,REDIS_001,"redis,infrastructure,cache",2026-03-26T02:13:00Z,sess-2383-8321
+Rate Limit Exceeded,Too many requests. User 4432 exceeded quota of 500 req/min.,shipping-service,LIMIT_429,"api,throttling,rate-limit",2026-03-26T10:08:00Z,sess-6476-9733
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.saveTransaction does not exist in version 3.12.0.,order-service,DEP_001,"java,dependency,build",2026-03-26T19:58:00Z,sess-9188-8995
+JWT Signature Verification Failed,Invalid token signature for user ID 9054. Potential unauthorized access.,cache-manager,AUTH_403,"security,jwt,auth",2026-03-26T14:27:00Z,sess-7630-7494
+JWT Signature Verification Failed,Invalid token signature for user ID 8821. Potential unauthorized access.,auth-service,AUTH_403,"security,jwt,auth",2026-03-26T17:53:00Z,sess-5632-3962
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 4628ms.,db-proxy,ES_503,"elasticsearch,search,timeout",2026-03-26T03:25:00Z,sess-5756-9557
+Redis Connection Refused,Could not connect to Redis at 10.0.5.22:6379. Connection refused.,payment-service,REDIS_001,"redis,infrastructure,cache",2026-03-26T23:57:00Z,sess-8167-9703
+JWT Signature Verification Failed,Invalid token signature for user ID 4432. Potential unauthorized access.,cache-manager,AUTH_403,"security,jwt,auth",2026-03-26T23:42:00Z,sess-4474-4278
+Database Connection Timeout,Failed to connect to MySQL cluster after 5730ms. Max connections reached.,inventory-service,DB_1002,"database,timeout,critical",2026-03-26T21:37:00Z,sess-6803-8969
+Invalid API Request Parameter,Validation failed: 'zipcode' field must be valid. Received: 'error_val_2'.,api-gateway,VAL_400,"api,validation,user-input",2026-03-26T15:35:00Z,sess-9599-8053
+Database Connection Timeout,Failed to connect to MySQL cluster after 6993ms. Max connections reached.,order-service,DB_1002,"database,timeout,critical",2026-03-26T01:29:00Z,sess-7056-2854
+Permission Denied,Access denied for user user_499 on resource /api/v1/settings. Role 'GUEST' insufficient.,api-gateway,AUTH_401,"security,rbac,auth",2026-03-26T06:17:00Z,sess-1900-9408
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 5459ms.,notification-service,ES_503,"elasticsearch,search,timeout",2026-03-26T15:49:00Z,sess-5942-5053
+Kafka Consumer Lag Critical,Consumer group 'group-A' is lagging by 18036 messages.,notification-service,KAFKA_LAG,"messaging,kafka,performance",2026-03-26T18:11:00Z,sess-3998-2680
+Redis Connection Refused,Could not connect to Redis at 192.168.1.10:6379. Connection refused.,cache-manager,REDIS_001,"redis,infrastructure,cache",2026-03-26T00:33:00Z,sess-3310-3175
+Broken Pipe,java.io.IOException: Broken pipe. The client closed the connection prematurely.,auth-service,NET_005,"network,io,broken-pipe",2026-03-26T00:42:00Z,sess-4062-3033
+Redis Connection Refused,Could not connect to Redis at 172.16.0.45:6379. Connection refused.,inventory-service,REDIS_001,"redis,infrastructure,cache",2026-03-26T23:49:00Z,sess-1529-2028
+JWT Signature Verification Failed,Invalid token signature for user ID 8821. Potential unauthorized access.,db-proxy,AUTH_403,"security,jwt,auth",2026-03-26T17:03:00Z,sess-6952-5632
+NullPointerException,java.lang.NullPointerException: Cannot invoke 'getUserInfo' because 'obj' is null.,user-service,ERR_500,"java,exception,nullpointer",2026-03-26T19:17:00Z,sess-9985-9075
+JWT Signature Verification Failed,Invalid token signature for user ID 9054. Potential unauthorized access.,shipping-service,AUTH_403,"security,jwt,auth",2026-03-26T13:02:00Z,sess-9195-1005
+Rate Limit Exceeded,Too many requests. User 8821 exceeded quota of 1000 req/min.,db-proxy,LIMIT_429,"api,throttling,rate-limit",2026-03-26T11:03:00Z,sess-6292-2196
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.getUserInfo does not exist in version 3.12.0.,user-service,DEP_001,"java,dependency,build",2026-03-26T02:50:00Z,sess-8398-7410
+JWT Signature Verification Failed,Invalid token signature for user ID 4432. Potential unauthorized access.,user-service,AUTH_403,"security,jwt,auth",2026-03-26T01:07:00Z,sess-3629-2612
+Permission Denied,Access denied for user user_948 on resource /api/v1/admin. Role 'GUEST' insufficient.,payment-service,AUTH_401,"security,rbac,auth",2026-03-26T09:17:00Z,sess-5431-7980
+JWT Signature Verification Failed,Invalid token signature for user ID 4432. Potential unauthorized access.,inventory-service,AUTH_403,"security,jwt,auth",2026-03-26T22:45:00Z,sess-6878-2544
+File System Read-Only,IOException: Could not write to directory /mnt/data/storage. System is read-only.,inventory-service,IO_009,"linux,filesystem,disk",2026-03-26T14:53:00Z,sess-8144-8962
+Permission Denied,Access denied for user user_113 on resource /api/v1/settings. Role 'GUEST' insufficient.,api-gateway,AUTH_401,"security,rbac,auth",2026-03-26T19:19:00Z,sess-9390-8267
+Redis Connection Refused,Could not connect to Redis at 192.168.1.10:6379. Connection refused.,shipping-service,REDIS_001,"redis,infrastructure,cache",2026-03-26T14:45:00Z,sess-4650-4812
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.checkStock does not exist in version 3.12.0.,notification-service,DEP_001,"java,dependency,build",2026-03-26T22:23:00Z,sess-8260-9912
+Invalid API Request Parameter,Validation failed: 'zipcode' field must be valid. Received: 'error_val_85'.,api-gateway,VAL_400,"api,validation,user-input",2026-03-26T19:21:00Z,sess-7542-1001
+Upstream Service Timeout,Timed out waiting for response from 'payment-service' after 9570ms.,auth-service,HTTP_504,"network,microservice,timeout",2026-03-26T10:09:00Z,sess-7613-5940
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 6622ms.,inventory-service,ES_503,"elasticsearch,search,timeout",2026-03-26T02:27:00Z,sess-9898-5050
+Invalid API Request Parameter,Validation failed: 'phone_number' field must be valid. Received: 'error_val_1'.,shipping-service,VAL_400,"api,validation,user-input",2026-03-26T15:20:00Z,sess-6125-3075
+Out of Memory Error,java.lang.OutOfMemoryError: Java heap space. Garbage collection limit exceeded.,api-gateway,JVM_OOM,"jvm,memory,stability",2026-03-26T10:18:00Z,sess-4310-5467
+Database Connection Timeout,Failed to connect to MySQL cluster after 7429ms. Max connections reached.,order-service,DB_1002,"database,timeout,critical",2026-03-26T06:05:00Z,sess-2732-7595
+Deadlock Found in Transaction,MySQLTransactionRollbackException: Deadlock found when trying to get lock.,user-service,DB_1213,"database,sql,deadlock",2026-03-26T16:52:00Z,sess-8555-5624
+Out of Memory Error,java.lang.OutOfMemoryError: Java heap space. Garbage collection limit exceeded.,order-service,JVM_OOM,"jvm,memory,stability",2026-03-26T00:32:00Z,sess-6371-3818
+Kafka Consumer Lag Critical,Consumer group 'group-B' is lagging by 11549 messages.,payment-service,KAFKA_LAG,"messaging,kafka,performance",2026-03-26T02:47:00Z,sess-9997-8544
+Invalid API Request Parameter,Validation failed: 'order_id' field must be valid. Received: 'error_val_93'.,order-service,VAL_400,"api,validation,user-input",2026-03-26T14:44:00Z,sess-7542-4568
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.sendEmail does not exist in version 3.12.0.,api-gateway,DEP_001,"java,dependency,build",2026-03-26T03:52:00Z,sess-2658-4527
+Kafka Consumer Lag Critical,Consumer group 'group-A' is lagging by 47801 messages.,inventory-service,KAFKA_LAG,"messaging,kafka,performance",2026-03-26T12:32:00Z,sess-8091-7293
+Invalid API Request Parameter,Validation failed: 'zipcode' field must be valid. Received: 'error_val_47'.,inventory-service,VAL_400,"api,validation,user-input",2026-03-26T13:38:00Z,sess-4825-8142
+NullPointerException,java.lang.NullPointerException: Cannot invoke 'sendEmail' because 'obj' is null.,shipping-service,ERR_500,"java,exception,nullpointer",2026-03-26T22:53:00Z,sess-6208-9820
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 6055ms.,shipping-service,ES_503,"elasticsearch,search,timeout",2026-03-26T21:41:00Z,sess-2062-7908
+NullPointerException,java.lang.NullPointerException: Cannot invoke 'saveTransaction' because 'obj' is null.,notification-service,ERR_500,"java,exception,nullpointer",2026-03-26T13:59:00Z,sess-7558-6724
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 1347ms.,payment-service,ES_503,"elasticsearch,search,timeout",2026-03-26T12:09:00Z,sess-7680-2756
+Deadlock Found in Transaction,MySQLTransactionRollbackException: Deadlock found when trying to get lock.,shipping-service,DB_1213,"database,sql,deadlock",2026-03-26T17:18:00Z,sess-8330-6647
+Invalid API Request Parameter,Validation failed: 'zipcode' field must be valid. Received: 'error_val_52'.,order-service,VAL_400,"api,validation,user-input",2026-03-26T07:50:00Z,sess-4325-8575
+Invalid API Request Parameter,Validation failed: 'email' field must be valid. Received: 'error_val_94'.,shipping-service,VAL_400,"api,validation,user-input",2026-03-26T08:17:00Z,sess-2490-4357
+Broken Pipe,java.io.IOException: Broken pipe. The client closed the connection prematurely.,cache-manager,NET_005,"network,io,broken-pipe",2026-03-26T09:18:00Z,sess-1072-5631
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.checkStock does not exist in version 3.12.0.,notification-service,DEP_001,"java,dependency,build",2026-03-26T10:04:00Z,sess-2728-4274
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 2426ms.,user-service,ES_503,"elasticsearch,search,timeout",2026-03-26T09:41:00Z,sess-8020-1032
+JWT Signature Verification Failed,Invalid token signature for user ID 1120. Potential unauthorized access.,api-gateway,AUTH_403,"security,jwt,auth",2026-03-26T18:21:00Z,sess-5464-3703
+Database Connection Timeout,Failed to connect to MySQL cluster after 4916ms. Max connections reached.,payment-service,DB_1002,"database,timeout,critical",2026-03-26T00:36:00Z,sess-5629-9456
+Invalid API Request Parameter,Validation failed: 'email' field must be valid. Received: 'error_val_94'.,order-service,VAL_400,"api,validation,user-input",2026-03-26T04:58:00Z,sess-5912-5514
+Upstream Service Timeout,Timed out waiting for response from 'order-service' after 7103ms.,shipping-service,HTTP_504,"network,microservice,timeout",2026-03-26T19:20:00Z,sess-8525-7614
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 2473ms.,api-gateway,ES_503,"elasticsearch,search,timeout",2026-03-26T11:13:00Z,sess-1530-5052
+Out of Memory Error,java.lang.OutOfMemoryError: Java heap space. Garbage collection limit exceeded.,auth-service,JVM_OOM,"jvm,memory,stability",2026-03-26T00:05:00Z,sess-1800-1531
+Invalid API Request Parameter,Validation failed: 'email' field must be valid. Received: 'error_val_99'.,cache-manager,VAL_400,"api,validation,user-input",2026-03-26T02:23:00Z,sess-6185-7491
+Permission Denied,Access denied for user user_458 on resource /api/v1/admin. Role 'GUEST' insufficient.,payment-service,AUTH_401,"security,rbac,auth",2026-03-26T00:16:00Z,sess-4560-4821
+Invalid API Request Parameter,Validation failed: 'zipcode' field must be valid. Received: 'error_val_83'.,cache-manager,VAL_400,"api,validation,user-input",2026-03-26T17:21:00Z,sess-4495-1676
+Rate Limit Exceeded,Too many requests. User 8821 exceeded quota of 100 req/min.,notification-service,LIMIT_429,"api,throttling,rate-limit",2026-03-26T08:21:00Z,sess-9092-6886
+Rate Limit Exceeded,Too many requests. User 4432 exceeded quota of 1000 req/min.,api-gateway,LIMIT_429,"api,throttling,rate-limit",2026-03-26T05:49:00Z,sess-1962-2488
+Upstream Service Timeout,Timed out waiting for response from 'shipping-service' after 3684ms.,cache-manager,HTTP_504,"network,microservice,timeout",2026-03-26T15:55:00Z,sess-9133-2553
+Deadlock Found in Transaction,MySQLTransactionRollbackException: Deadlock found when trying to get lock.,db-proxy,DB_1213,"database,sql,deadlock",2026-03-26T18:59:00Z,sess-2792-6334
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 3854ms.,inventory-service,ES_503,"elasticsearch,search,timeout",2026-03-26T12:02:00Z,sess-5750-4457
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.checkStock does not exist in version 3.12.0.,inventory-service,DEP_001,"java,dependency,build",2026-03-26T08:10:00Z,sess-9657-5346
+Kafka Consumer Lag Critical,Consumer group 'group-A' is lagging by 88395 messages.,db-proxy,KAFKA_LAG,"messaging,kafka,performance",2026-03-26T16:00:00Z,sess-7301-2948
+Invalid API Request Parameter,Validation failed: 'zipcode' field must be valid. Received: 'error_val_68'.,order-service,VAL_400,"api,validation,user-input",2026-03-26T02:59:00Z,sess-5254-7343
+Rate Limit Exceeded,Too many requests. User 1120 exceeded quota of 100 req/min.,inventory-service,LIMIT_429,"api,throttling,rate-limit",2026-03-26T12:12:00Z,sess-6907-2188
+NullPointerException,java.lang.NullPointerException: Cannot invoke 'processOrder' because 'obj' is null.,db-proxy,ERR_500,"java,exception,nullpointer",2026-03-26T19:44:00Z,sess-9339-1815
+Deadlock Found in Transaction,MySQLTransactionRollbackException: Deadlock found when trying to get lock.,order-service,DB_1213,"database,sql,deadlock",2026-03-26T06:49:00Z,sess-9311-8675
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.saveTransaction does not exist in version 3.12.0.,inventory-service,DEP_001,"java,dependency,build",2026-03-26T20:16:00Z,sess-6433-9500
+Upstream Service Timeout,Timed out waiting for response from 'inventory-service' after 2086ms.,inventory-service,HTTP_504,"network,microservice,timeout",2026-03-26T15:29:00Z,sess-8491-3035
+Broken Pipe,java.io.IOException: Broken pipe. The client closed the connection prematurely.,cache-manager,NET_005,"network,io,broken-pipe",2026-03-26T05:09:00Z,sess-7639-4057
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 3814ms.,notification-service,ES_503,"elasticsearch,search,timeout",2026-03-26T23:50:00Z,sess-3201-6075
+Rate Limit Exceeded,Too many requests. User 8821 exceeded quota of 500 req/min.,order-service,LIMIT_429,"api,throttling,rate-limit",2026-03-26T14:41:00Z,sess-1702-2478
+NullPointerException,java.lang.NullPointerException: Cannot invoke 'processOrder' because 'obj' is null.,cache-manager,ERR_500,"java,exception,nullpointer",2026-03-26T17:35:00Z,sess-1500-5967
+JWT Signature Verification Failed,Invalid token signature for user ID 4432. Potential unauthorized access.,db-proxy,AUTH_403,"security,jwt,auth",2026-03-26T13:42:00Z,sess-5064-3908
+Permission Denied,Access denied for user user_867 on resource /api/v1/admin. Role 'GUEST' insufficient.,inventory-service,AUTH_401,"security,rbac,auth",2026-03-26T18:42:00Z,sess-4058-9128
+Elasticsearch Search Timeout,Search phase execution exception: all shards failed. Took 3341ms.,api-gateway,ES_503,"elasticsearch,search,timeout",2026-03-26T21:11:00Z,sess-3905-9265
+NullPointerException,java.lang.NullPointerException: Cannot invoke 'sendEmail' because 'obj' is null.,notification-service,ERR_500,"java,exception,nullpointer",2026-03-26T06:20:00Z,sess-7398-3380
+Permission Denied,Access denied for user user_352 on resource /api/v1/settings. Role 'GUEST' insufficient.,inventory-service,AUTH_401,"security,rbac,auth",2026-03-26T20:52:00Z,sess-2842-7794
+JWT Signature Verification Failed,Invalid token signature for user ID 8821. Potential unauthorized access.,order-service,AUTH_403,"security,jwt,auth",2026-03-26T04:06:00Z,sess-9854-8728
+Invalid API Request Parameter,Validation failed: 'zipcode' field must be valid. Received: 'error_val_60'.,auth-service,VAL_400,"api,validation,user-input",2026-03-26T23:24:00Z,sess-6155-6942
+Dependency Version Conflict,NoSuchMethodError: org.apache.commons.getUserInfo does not exist in version 3.12.0.,user-service,DEP_001,"java,dependency,build",2026-03-26T15:35:00Z,sess-1076-1585
+Database Connection Timeout,Failed to connect to MySQL cluster after 5512ms. Max connections reached.,cache-manager,DB_1002,"database,timeout,critical",2026-03-26T11:36:00Z,sess-6511-8364
+Redis Connection Refused,Could not connect to Redis at 172.16.0.45:6379. Connection refused.,user-service,REDIS_001,"redis,infrastructure,cache",2026-03-26T17:17:00Z,sess-5658-3901
+Kafka Consumer Lag Critical,Consumer group 'group-B' is lagging by 46167 messages.,inventory-service,KAFKA_LAG,"messaging,kafka,performance",2026-03-26T07:24:00Z,sess-7670-3240
+Permission Denied,Access denied for user user_285 on resource /api/v1/admin. Role 'GUEST' insufficient.,shipping-service,AUTH_401,"security,rbac,auth",2026-03-26T23:31:00Z,sess-3169-6744
+Database Connection Timeout,Failed to connect to MySQL cluster after 5529ms. Max connections reached.,payment-service,DB_1002,"database,timeout,critical",2026-03-26T01:50:00Z,sess-1276-9991
+Deadlock Found in Transaction,MySQLTransactionRollbackException: Deadlock found when trying to get lock.,shipping-service,DB_1213,"database,sql,deadlock",2026-03-26T10:59:00Z,sess-7194-2219
+Redis Connection Refused,Could not connect to Redis at 172.16.0.45:6379. Connection refused.,shipping-service,REDIS_001,"redis,infrastructure,cache",2026-03-26T15:20:00Z,sess-5593-6386
+Broken Pipe,java.io.IOException: Broken pipe. The client closed the connection prematurely.,payment-service,NET_005,"network,io,broken-pipe",2026-03-26T01:31:00Z,sess-3152-2352
+Out of Memory Error,java.lang.OutOfMemoryError: Java heap space. Garbage collection limit exceeded.,db-proxy,JVM_OOM,"jvm,memory,stability",2026-03-26T23:58:00Z,sess-1090-1658
+Broken Pipe,java.io.IOException: Broken pipe. The client closed the connection prematurely.,auth-service,NET_005,"network,io,broken-pipe",2026-03-26T16:42:00Z,sess-6791-8581
+Redis Connection Refused,Could not connect to Redis at 172.16.0.45:6379. Connection refused.,payment-service,REDIS_001,"redis,infrastructure,cache",2026-03-26T19:06:00Z,sess-4508-7927

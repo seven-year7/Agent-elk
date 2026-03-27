@@ -3,8 +3,15 @@
 # ES 连接：api_key / basic_auth 为客户端内置；TLS 通过 ES_CA_CERTS、ES_VERIFY_CERTS 配置，无新增包
 # IK 分词（ik_smart）在 ES 服务端安装 analysis-ik，非 pip 包
 elasticsearch>=8.10.0,<9
+fastapi>=0.110
 langchain-core>=0.2.0
 langgraph>=0.2.0
+numpy>=1.23.0
 openai>=1.0.0
 python-dotenv>=1.0.0
 redis>=5
+pypdf>=4
+pandas>=2
+pydantic>=2
+requests>=2
+uvicorn[standard]>=0.27

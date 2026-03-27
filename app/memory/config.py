@@ -16,7 +16,7 @@ HARD_STOP_LIMIT = 7000
 
 # --- 模型选型 ---
 # 用于生成摘要的轻量级模型
-SUMMARY_MODEL = "qwen/qwen3-4b:free"
+SUMMARY_MODEL = "xiaomi/mimo-v2-flash"
 
 # --- 持久化配置 ---
 # 模拟 PostgresSaver 的本地存储路径（相对仓库根目录）

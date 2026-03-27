@@ -98,9 +98,14 @@ Myself/
 │   │   ├── es_client.py  # ESNervousSystem / es_node：连接、init_index、push_log
 │   │   └── log_tools.py  # search_logs_tool / es_search_tool：kNN 语义检索日志
 │   ├── schema/           # ES Mapping 定义 (Json/Python)
-│   │   └── log_schema.py # intelligent_logs_v1：message 使用 IK ik_smart + message_embedding 向量
+│   │   └── log_schema.py # intelligent_logs_v1：message 使用 IK ik_smart
+│   ├── database/         # （新增）数据接入与入库层：Mapping / Loader / Vector Service（新骨架）
+│   │   ├── schema.py      # 定义 ES Mapping（索引结构）（与 app/schema/ 目前存在职责重叠，后续可迁移统一）
+│   │   ├── loader.py      # 负责 CSV/PDF 的加载与清洗（占位骨架）
+│   │   └── vector_service.py # 负责向量化（Embedding）与批量入库（占位骨架）
 │   └── utils/            # Embedding 工具, 时间解析器
 │       └── embedding.py  # EmbeddingGenerator / embedder（OpenAI 兼容嵌入）
+├── app/data/             # （新增）原始数据目录（例如 elk_error_logs_100.csv）
 ├── config/               # （遗留）memory_state.json；Phase 2.9 起由 Redis 替代（保留兼容回退）
 ├── .env                  # 本地密钥与覆盖项（勿提交仓库；与 settings 对应）
 ├── check_env.py          # 环境检查：ES 连通与 init_index（python check_env.py）
@@ -138,7 +143,7 @@ Myself/
 | `DEFAULT_LLM_MODEL` | `LLM_MODEL` 的别名回退（与部分文档一致） |
 | `OPENAI_API_KEY` | **回退**：未配置 `OPENROUTER_API_KEY` 时使用，直连 OpenAI 或配合 `OPENAI_BASE_URL` 走其它兼容网关 |
 | `OPENAI_BASE_URL` | 与 `OPENAI_API_KEY` 联用时的自定义基址（直连场景通常留空） |
-| `MEMORY_SUMMARY_MODEL` | **Phase 2.5/2.6**：摘要用小模型（OpenRouter ID），默认 `qwen/qwen3-4b:free` |
+| `MEMORY_SUMMARY_MODEL` | **Phase 2.5/2.6**：摘要用小模型（OpenRouter ID），默认 `xiaomi/mimo-v2-flash` |
 | `MEMORY_HISTORY_THRESHOLD` | **轮数阈值**：`user+assistant` 消息条数超过即触发压缩（与 Token 阈值二选一满足即触发）；默认 `8` |
 | `MEMORY_TOKEN_LIMIT` | **Phase 2.6**：历史消息估算 Token 超过即触发压缩（`≈ len/4` 字符）；默认 `3000` |
 | `MEMORY_HARD_STOP_LIMIT` | **硬上限**：摘要+历史+本轮 system/检索模板估算 Token ≥ 此值则 **不调用主模型**；默认 `7000`（约 8k 窗口留余量） |
@@ -153,23 +158,96 @@ Myself/
 
 安装依赖：`python -m pip install -r requirements.txt`（Windows PowerShell 5.x 中请用分号串联命令，避免使用 `&&`）。
 
+## 6.0 MCP Server（FastAPI）与 Agent 接入
+
+本仓库新增 **Elasticsearch MCP Server**（HTTP 形态，FastAPI），用于统一暴露日志查询工具。**Agent 侧不再直连 ES**，实时日志检索通过 MCP Server 完成。
+
+### 6.0.1 MCP Server 启动
+
+在仓库根目录执行：
+
+```bash
+python -m uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8000
+```
+
+### 6.0.2 MCP Server 环境变量（服务端）
+
+| 环境变量 | 说明 |
+|----------|------|
+| `MCP_ES_URL` | MCP Server 连接 ES 的地址（缺省回退 `ES_URL`，再回退 `http://localhost:9200`） |
+| `MCP_ES_AUTHORIZATION` | MCP→ES 的默认鉴权 Header（如 `Basic ...` / `ApiKey ...` / `Bearer ...`）；当请求未带 Authorization 时作为兜底 |
+| `MCP_HERA_BASE_URL` | Hera 索引配置查询 API 基址（仅用于 `queryByIamId`） |
+
+### 6.0.3 Agent 环境变量（客户端）
+
+| 环境变量 | 说明 |
+|----------|------|
+| `MCP_SERVER_URL` | MCP Server 地址，默认 `http://127.0.0.1:8000` |
+| `MCP_AUTHORIZATION` | Agent→MCP 的鉴权 Header（只走 Header，不透传 username/password） |
+
+### 6.0.4 Agent 执行流（检索链路）
+
+- **Tool-calling loop（推荐主链路）**：由 OpenRouter LLM 自动选择工具，程序负责调用 MCP 并回喂结果，直到模型输出最终 RCA。
+- 可用工具：`queryByTimeRange` / `queryByRequestId` / `executeDsl`
+- `queryByTimeRange` 支持两种时间入参：`startTime + endTime`（绝对时间）或 `lastMinutes/lastHours`（相对时间，服务端按真实当前时间换算），用于稳定“最近日志”检索。
+- `queryByRequestId` 已改为直连 ES：必填 `requestId + serviceName`（匹配字段 `servicename`），可选 `indexName/level/size`，不再依赖 Hera。
+- 当工具返回 `errors` 时，Agent 会在最终答复前优先透传工具原始错误（tool/code/message），降低模型误判概率。
+- `executeDsl` 采用 **DSL 双层防线**：
+  - 生成前：工具描述明确要求按目标索引实时 mapping 生成字段与子字段。
+  - 执行前：MCP Server 拉取并缓存 mapping，按字段类型做语义校验（如 `term/match/range/aggs.terms`）。
+  - 失败后：若返回 `DSL_FIELD_TYPE_MISMATCH` / `DSL_NOT_ALLOWED` / `INVALID_DSL_JSON`，编排器会把错误回喂模型触发 DSL 重写，最多 2 次。
+- 核心原则：**工具选择权在模型**，代码不再做复杂路由器来决定调用哪个工具
+## 6.1 模型连通性测试（小模型 vs 大模型）
+
+当你遇到“**小模型一直报错/限流，但大模型正常**”时，先跑这个独立脚本，可快速判断是 **OpenRouter free 模型上游限流/额度** 还是 **本地代码/配置问题**。
+
+运行方式：
+
+```bash
+python test/test_llm_connectivity.py
+```
+
+脚本会读取仓库根目录 `.env`（若存在）与环境变量，并分别测试：
+- **小模型**：`MEMORY_SUMMARY_MODEL`（默认 `xiaomi/mimo-v2-flash`）
+- **大模型**：`LLM_MODEL`（默认 `openai/gpt-4o-mini`，回退 `DEFAULT_LLM_MODEL`）
+
+如何解读常见报错：
+- **429 / Rate limit exceeded**：通常为 **free 小模型上游限流**（高峰期很常见）。脚本会尽量打印 `X-RateLimit-*` / `Retry-After` 相关响应头（若 SDK 暴露）。
+- **402 / Spend limit exceeded**：通常为该 API Key 设置了花费上限（或额度不足），与模型本身无关。
+- **两者都失败**：优先检查 `OPENROUTER_API_KEY` / `OPENROUTER_BASE_URL`（或回退的 `OPENAI_API_KEY` / `OPENAI_BASE_URL`）是否正确、网络是否可达。
+
+## 6.2 Elasticsearch 证书专项测试（TLS）
+
+当你怀疑是 ES 证书导致连接/查询失败时，可运行：
+
+```bash
+python test/test_es_tls_certificate.py
+```
+
+该脚本会执行两层验证：
+- `requests` 握手层（快速判断证书链、CA、校验开关是否正确）
+- `elasticsearch` SDK 层（与项目真实客户端参数一致，验证实际可用性）
+
+依赖环境变量：`ES_URL`、`ES_VERIFY_CERTS`、`ES_CA_CERTS`、`ES_API_KEY`（或 `ES_USERNAME` + `ES_PASSWORD`）。
+
 **Elasticsearch 索引与 IK：** `intelligent_logs_v1` 的 `message` 字段映射为 **IK `ik_smart`**，节点需安装 **`analysis-ik`** 插件。若该索引曾以其他 analyzer（如 `standard`）创建过，Elasticsearch **不会**自动改 mapping，需先在 Dev Tools 执行 `DELETE /intelligent_logs_v1`（会删数据）后再运行 `python check_env.py`。
 
-**Phase 1.2（数据灌溉 / 记忆灌溉）：** 配置 **`OPENROUTER_API_KEY`** 与 **`EMBEDDING_MODEL`**（默认 `openai/text-embedding-3-small`）；若未配置 OpenRouter，可回退 **`OPENAI_API_KEY`**。建议先 `python check_env.py` 检查 ES 与索引，再任选：`python seed_demo_logs.py`（**18 条** 中文场景）或 `python ingest_mock_logs.py`（**8 条** 英文关联场景）。写入字段需符合 `log_schema`（含 `message_embedding`，默认 **1536** 维；换模型时请核对向量维度）。
+**Phase 1.2（数据灌溉 / 记忆灌溉）：** 建议先 `python check_env.py` 检查 ES 与索引，再运行 `python seed_demo_logs.py`（**18 条** 中文场景）或 `python ingest_mock_logs.py`（**8 条** 英文关联场景）。写入字段需符合 `log_schema`。
 
-**Phase 2.1（Agent 工具层）：** `app/tools/log_tools.py` 提供 **`search_logs_tool`**（别名 **`es_search_tool`**）：将用户问句向量化，对 `intelligent_logs_v1` 的 **`message_embedding`** 执行 **kNN**（`num_candidates` 随 `top_k` 放大），返回带时间、服务、级别、正文的纯文本，供 ReAct 的 *Observation* 注入 LLM。完整 Thought → Action → Observation 循环可在 `app/core` 用 LangGraph / 自研循环衔接。
+**Phase 2.1（Agent 工具层）：** `app/tools/log_tools.py` 提供 `search_logs_tool`（别名 `es_search_tool`）用于日志检索（MCP 链路下通常由 `executeDsl`/`queryByTimeRange` 完成）。完整 Thought → Action → Observation 循环可在 `app/core` 用 LangGraph / 自研循环衔接。
 
-**Phase 2.1（续，大脑与入口）：** `app/core/agent_brain.py` 中 **`ELKAgent`** 先调用 **`search_logs_tool`** 拉取日志上下文，再用 **`LLM_MODEL`**（默认 `openai/gpt-4o-mini`）生成诊断。对话客户端优先 **`OPENROUTER_API_KEY`** + **`OPENROUTER_BASE_URL`**（默认 `https://openrouter.ai/api/v1`），否则使用 **`OPENAI_API_KEY`**（可选 **`OPENAI_BASE_URL`**）。**交互入口（Phase 2.1.3）：** **`python main.py`** — 运维对话式 CLI；亦可 `python -m app.core.agent_brain`（内置 REPL）；或在代码中 `from app.core.agent_brain import agent` 后调用 `agent.chat("你的问题")`。
+**Phase 2.1（续，大脑与入口）：** `app/core/agent_brain.py` 中 **`ELKAgent`** 采用 MCP tool-calling 流程，由模型在 `queryByTimeRange / queryByRequestId / executeDsl` 间自主选择，再综合证据生成诊断。对话客户端优先 **`OPENROUTER_API_KEY`** + **`OPENROUTER_BASE_URL`**（默认 `https://openrouter.ai/api/v1`），否则使用 **`OPENAI_API_KEY`**（可选 **`OPENAI_BASE_URL`**）。**交互入口（Phase 2.1.3）：** **`python main.py`** — 运维对话式 CLI；亦可 `python -m app.core.agent_brain`（内置 REPL）；或在代码中 `from app.core.agent_brain import agent` 后调用 `agent.chat("你的问题")`。
 
 **Phase 2.2（提示词解耦）：** 系统角色与用户侧「检索结果 + 问题」缝合模板迁至 **`app/prompts/`**，便于独立迭代提示词工程；`INTENT_EXTRACT_TMPL` 供后续结构化意图抽取使用。
 
-**Phase 2.5（记忆架构与小模型级联）：** **`app/memory/manager.py`** 中 **`MemoryManager`** 维护多轮对话；超过 **`MEMORY_HISTORY_THRESHOLD`**（默认 8 条消息）时，用 **`MEMORY_SUMMARY_MODEL`**（默认 **`qwen/qwen3-4b:free`**）压缩旧轮，仅保留最近 2 条原文 + 摘要 system 段。**主模型**（`LLM_MODEL`）仍在 `agent_brain` 中做带检索上下文的推理；成功回复后向 `memory_bus` 写入「用户原话 + 助手结论」（不含整段 ES 模板），避免摘要语料膨胀。
+**Phase 2.5（记忆架构与小模型级联）：** **`app/memory/manager.py`** 中 **`MemoryManager`** 维护多轮对话；超过 **`MEMORY_HISTORY_THRESHOLD`**（默认 8 条消息）时，用 **`MEMORY_SUMMARY_MODEL`**（默认 **`xiaomi/mimo-v2-flash`**）压缩旧轮，仅保留最近 2 条原文 + 摘要 system 段。**主模型**（`LLM_MODEL`）仍在 `agent_brain` 中做带检索上下文的推理；成功回复后向 `memory_bus` 写入「用户原话 + 助手结论」（不含整段 ES 模板），避免摘要语料膨胀。
 
 **Phase 2.6（双指标、持久化与安全兜底）：** 在 2.5 基础上增加 **轮数 OR 估算 Token**（**`MEMORY_TOKEN_LIMIT`**，默认 3000）双触发摘要；**`config/memory_state.json`**（可 **`MEMORY_STATE_PATH`** 覆盖）持久化 `summary` / `history`，启动时自动加载；**`check_safety_overflow`** 在调用主模型前校验「摘要 + 历史 + 主 system + 本轮检索模板」估算 Token 是否低于 **`MEMORY_HARD_STOP_LIMIT`**（默认 7000），否则直接返回提示并 **不请求 API**，避免上下文过长导致报错崩溃。摘要失败时 **Trim** 最旧消息兜底。
 
 **Phase 2.7（配置解耦）：** 上述默认值在代码中的「单一来源」分别为 **`app/memory/config.py`**、**`app/core/config.py`**、**`app/tools/config.py`**；`.env` 覆盖项与 §6 表格一致。
 
 **Phase 2.9（Redis 结构化存储）：** 将短期记忆从本地 JSON 文件切换为 Redis Hash：每个会话（Session）使用 Key `elk:agent:session:{thread_id}` 隔离存取，并对话更新时写入 `summary`、`history`、`stats:token_count`、`meta:service`、`meta:updated_at` 等字段；同时设置会话 TTL（默认 `MEMORY_TTL=3600`），避免存储爆炸。
+
 
 ## 7. 文档体系
 

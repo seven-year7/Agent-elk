@@ -9,18 +9,19 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from openai import APIConnectionError as OpenAIAPIConnectionError
+from openai import APITimeoutError as OpenAIAPITimeoutError
 
-from app.core.config import DEFAULT_LLM_MODEL, MAIN_LLM_TEMPERATURE, OPS_DIRECT_KEYWORDS
-from app.core.router import IntentRouter
+from app.core.config import DEFAULT_LLM_MODEL, MAIN_LLM_TEMPERATURE
+from app.mcp_client.client import get_mcp_client
 from app.memory.manager import memory_bus
 from app.prompts.templates import ANALYSIS_PROMPT_TMPL, SYSTEM_PROMPT
-from app.tools.config import SEARCH_LOGS_DEFAULT_TOP_K
-from app.tools.log_tools import search_logs_tool
+from app.tool_calling.mcp_tools import build_mcp_tool_registry
+from app.tool_calling.orchestrator import OrchestratorResult, ToolCallingOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -88,104 +89,85 @@ class ELKAgent:
     def __init__(self) -> None:
         self._client = _build_chat_openai_client()
         self._model = _resolve_llm_model()
-        # @Step: 2b - 系统提示外置至 app/prompts/templates.py（Phase 2.2 解耦）
-        self._system_prompt = SYSTEM_PROMPT
-        self._intent_router = IntentRouter()
+        self._system_prompt = SYSTEM_PROMPT  # 保留专家身份
+        self._mcp = get_mcp_client()
+        self._registry = build_mcp_tool_registry(mcp=self._mcp)
+        self._orchestrator = ToolCallingOrchestrator(
+            llm_client=self._client,
+            llm_model=self._model,
+            registry=self._registry,
+            temperature=MAIN_LLM_TEMPERATURE,
+            max_tool_rounds=5,
+        )
+
+    def _tool_calling_chat(self, user_input: str, *, thread_id: str) -> OrchestratorResult:
+        base_context = memory_bus.get_context(thread_id=thread_id)
+        messages: list[dict[str, object]] = [{"role": "system", "content": self._system_prompt}]
+        messages.extend(base_context[-6:])  # 控制 token
+        messages.append({"role": "user", "content": user_input})
+        return self._orchestrator.run(messages=messages)
+
+    def _diagnose_runtime_error(self, exc: Exception) -> str:
+        msg = str(exc).strip() or repr(exc)
+        lower_msg = msg.lower()
+        if isinstance(exc, (OpenAIAPIConnectionError, OpenAIAPITimeoutError)) or "connection error" in lower_msg:
+            return (
+                "tool-calling 执行失败：LLM 网关连接异常。\n"
+                f"原始错误：{msg}\n"
+                "建议检查：OPENROUTER_BASE_URL / OPENROUTER_API_KEY / 网络连通性。"
+            )
+        if "mcp request failed" in lower_msg or "127.0.0.1:8000" in lower_msg:
+            return (
+                "tool-calling 执行失败：MCP Server 连接异常。\n"
+                f"原始错误：{msg}\n"
+                "建议检查：MCP_SERVER_URL 是否正确、MCP 服务是否已启动。"
+            )
+        return f"tool-calling 执行失败：{msg}"
+
+    def _format_tool_errors(self, tool_errors: list[dict[str, str]]) -> str:
+        # @Agent_Logic: 工具层失败时优先原样透传关键错误，减少模型误判导致的错误修复建议
+        if not tool_errors:
+            return ""
+        lines = ["【工具链路原始错误】"]
+        for err in tool_errors[:5]:
+            tool_name = err.get("tool", "unknown")
+            code = err.get("code", "UNKNOWN")
+            message = err.get("message", "")
+            lines.append(f"- tool={tool_name}, code={code}, message={message}")
+        return "\n".join(lines)
+
+    def _format_executed_dsls(self, executed_dsls: list[str]) -> str:
+        if not executed_dsls:
+            return ""
+        lines = ["【本次执行DSL】"]
+        for idx, dsl in enumerate(executed_dsls[:3], start=1):
+            lines.append(f"[DSL-{idx}]")
+            lines.append(dsl)
+        return "\n".join(lines)
 
     def chat(self, user_input: str, thread_id: str | None = None) -> str:
-        # @Step: 3 - 网关 ->（可选 ES 检索）-> 推理；temperature 压低以降低胡编风险
         text = (user_input or "").strip()
         if not text:
             return "请输入具体问题或现象描述。"
 
         effective_thread_id = thread_id or "default_user"
-        query_lower = text.lower()
-        direct_match = any(k in query_lower for k in OPS_DIRECT_KEYWORDS)
-
-        current_time = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-        # 1) 无论走什么逻辑，【身份】和【历史】是永恒的基石
-        base_context = memory_bus.get_context(thread_id=effective_thread_id)
-        summary_text = ""
-        short_history: list[dict[str, str]] = []
-        for msg in base_context:
-            if not isinstance(msg, dict):
-                continue
-            role = msg.get("role")
-            content = msg.get("content", "")
-            if role == "system" and isinstance(content, str) and content.startswith("之前的对话摘要："):
-                summary_text = content.replace("之前的对话摘要：", "", 1).strip()
-            elif role in ("user", "assistant"):
-                short_history.append({"role": str(role), "content": str(content)})
-        short_history = short_history[-4:]
-
-        messages: list[dict[str, str]] = [{"role": "system", "content": self._system_prompt}]
-        if summary_text:
-            messages.append({"role": "system", "content": f"【关键历史摘要】: {summary_text}"})
-        messages.extend(short_history)
-
-        # 2) 路由逻辑判定
-        final_user_content = text
-        if direct_match:
-            print("⚡ [DIRECT_LOG] 检测到明确运维指令，启动实时检索...")
-            logs_context = search_logs_tool(text, top_k=SEARCH_LOGS_DEFAULT_TOP_K)
-            logger.info("[INFO][AgentBrain]: 检索上下文已注入 LLM（长度约 %s 字符）", len(logs_context))
-
-            # 将关键日志片段写入 summary，供后续 Chat/追问复用（No ES）
-            memory_bus.append_key_log_snippets(logs_context, thread_id=effective_thread_id)
-
-            final_user_content = (
-                f"【用户问题】\n{text}\n\n"
-                f"【实时抓取日志】\n{logs_context}\n\n"
-                "请结合以上新证据和历史背景分析，给出根因判断与下一步排查/修复建议。"
-            )
-        else:
-            # 第二级：单模型意图识别（No ES / No RAG）
-            intent = self._intent_router.judge_intent(text, summary_text, short_history)
-
-            if intent == "LOG":
-                print("📋 [LOG_FOLLOW_UP] 运维追问模式，利用内存中的日志记录回答...")
-                final_user_content = f"用户正在追问技术细节: {text}。请根据上下文已有的日志结论进行解答。"
-            else:
-                print("💬 [GENERAL_CHAT] 纯交流模式，维持专家身份回答...")
-                final_user_content = text
-
-        print("[推理中] 正在生成回复...")
-
-        # @Step: 3a - Phase 2.6：主 system + 本轮载荷估算超硬上限则阻断
-        safety_payload = f"{self._system_prompt}\n{final_user_content}"
-        if not memory_bus.check_safety_overflow(
-            additional_content=safety_payload, thread_id=effective_thread_id
-        ):
-            return (
-                "【上下文过长】当前记忆摘要、近期对话与本次检索内容合计已接近模型窗口上限，"
-                "已停止调用主模型以避免请求失败。请新开一次会话，或清理 Redis 会话后重试："
-                f" elk:agent:session:{effective_thread_id}"
-            )
-
-        # 3) 组装并发送
-        messages.append({"role": "user", "content": final_user_content})
-
         try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                temperature=MAIN_LLM_TEMPERATURE,
-            )
+            result = self._tool_calling_chat(text, thread_id=effective_thread_id)
         except Exception as exc:
-            logger.error("[ERROR][AgentBrain]: LLM 调用失败: %s", exc)
-            return f"模型推理失败：{exc!s}"
+            logger.error("[ERROR][AgentBrain]: tool-calling 失败：%s", exc)
+            return self._diagnose_runtime_error(exc)
 
-        choice = response.choices[0].message
-        content = (choice.content or "").strip()
-        if not content:
-            logger.warning("[WARN][AgentBrain]: 模型返回空内容")
-            return "模型未返回有效文本，请稍后重试或更换 LLM_MODEL。"
+        answer = result.answer
+        raw_error_block = self._format_tool_errors(result.tool_errors)
+        dsl_block = self._format_executed_dsls(result.executed_dsls)
+        if dsl_block:
+            answer = f"{dsl_block}\n\n{answer}"
+        if raw_error_block:
+            answer = f"{raw_error_block}\n\n{answer}"
 
-        # 仅记录「用户原话 + 助手结论」，避免把整段检索模板重复塞进摘要语料
         memory_bus.add_message("user", text, thread_id=effective_thread_id)
-        memory_bus.add_message("assistant", content, thread_id=effective_thread_id)
-        return content
+        memory_bus.add_message("assistant", answer, thread_id=effective_thread_id)
+        return answer
 
 
 agent = ELKAgent()

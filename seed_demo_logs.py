@@ -99,7 +99,7 @@ def main() -> int:
             print(f"❌ 第 {index}/{total} 条嵌入失败：{exc!s}")
             return 1
 
-        doc = {**base, "message_embedding": vector}
+        doc = {**base}
         try:
             es_node.push_log(doc)
         except Exception as exc:
