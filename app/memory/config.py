@@ -31,5 +31,8 @@ REDIS_DB = 0
 # 存储前缀，用于命名空间隔离（Key: SESSION_PREFIX + {thread_id}）
 SESSION_PREFIX = "elk:agent:session:"
 
-# 记忆有效期（TTL）：3600 秒后自动清理，防止爆炸
-MEMORY_TTL = 3600
+# 记忆有效期（TTL）：86400 秒（1天）后自动清理，防止爆炸
+MEMORY_TTL = 86400
+
+# 每日压缩文档目录（相对仓库根目录）
+MEMORY_DAILY_ARCHIVE_DIR = "docs/memory-daily"

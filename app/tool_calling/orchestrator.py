@@ -15,6 +15,7 @@ from typing import Any
 from openai import APIConnectionError as OpenAIAPIConnectionError
 from openai import APITimeoutError as OpenAIAPITimeoutError
 
+from app.prompts.tool_calling_prompts import FORCE_SIMPLE_DSL_PROMPT
 from app.tool_calling.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -61,12 +62,7 @@ class ToolCallingOrchestrator:
                 messages.append(
                     {
                         "role": "system",
-                        "content": (
-                            "你在 executeDsl 上已连续出现 2 次 DSL 错误。"
-                            "从现在开始，禁止使用 aggs/sort/script/range/bool 嵌套。"
-                            "请仅使用最简单的关键词查询：query.match（必要时 match_phrase），"
-                            "并返回可直接执行的最小 DSL。"
-                        ),
+                        "content": FORCE_SIMPLE_DSL_PROMPT,
                     }
                 )
                 simple_dsl_hint_injected = True

@@ -20,6 +20,7 @@ from app.core.config import DEFAULT_LLM_MODEL, MAIN_LLM_TEMPERATURE
 from app.mcp_client.client import get_mcp_client
 from app.memory.manager import memory_bus
 from app.prompts.templates import ANALYSIS_PROMPT_TMPL, SYSTEM_PROMPT
+from app.prompts.tool_calling_prompts import RAG_EXECUTION_CONSTRAINT_PROMPT
 from app.tool_calling.mcp_tools import build_mcp_tool_registry
 from app.tool_calling.orchestrator import OrchestratorResult, ToolCallingOrchestrator
 
@@ -83,6 +84,19 @@ def _resolve_llm_model() -> str:
     return _env_str("LLM_MODEL") or _env_str("DEFAULT_LLM_MODEL") or DEFAULT_LLM_MODEL
 
 
+def _resolve_default_thread_id() -> str:
+    # @Step: thread_id 解析优先级：显式配置 > 系统用户 > 兜底
+    # @Security: 仅使用本地环境变量，不写入敏感标识。
+    return (
+        _env_str("AGENT_THREAD_ID")
+        or _env_str("THREAD_ID")
+        or _env_str("USER")
+        or _env_str("USERNAME")
+        or _env_str("COMPUTERNAME")
+        or "default_user"
+    )
+
+
 class ELKAgent:
     """先检索日志上下文，再调用聊天补全生成诊断说明。"""
 
@@ -97,7 +111,7 @@ class ELKAgent:
             llm_model=self._model,
             registry=self._registry,
             temperature=MAIN_LLM_TEMPERATURE,
-            max_tool_rounds=5,
+            max_tool_rounds=3,
         )
 
     def _tool_calling_chat(self, user_input: str, *, thread_id: str) -> OrchestratorResult:
@@ -106,14 +120,7 @@ class ELKAgent:
         messages.append(
             {
                 "role": "system",
-                "content": (
-                    "RAG 增强执行约束（必须遵守）：\n"
-                    "1) 先通过 queryByTimeRange/queryByRequestId/executeDsl 拿到日志事实（LogFacts）。\n"
-                    "2) 再调用 queryKnowledgeBaseHybrid，优先传入 errorTitle/symptom/suspectedRootCause/logExcerpt/"
-                    "candidateResolution（mcp_summary_only），可附带 serviceName/errorCode 过滤。\n"
-                    "3) 回答时必须分区：先写【LogFacts】，再写【KBEvidence】，最后写【DiagnosisAndActions】。\n"
-                    "4) 若 LogFacts 与 KBEvidence 不一致，以 LogFacts 为准，并在结论中说明不一致点。"
-                ),
+                "content": RAG_EXECUTION_CONSTRAINT_PROMPT,
             }
         )
         messages.extend(base_context[-6:])  # 控制 token
@@ -163,7 +170,7 @@ class ELKAgent:
         if not text:
             return "请输入具体问题或现象描述。"
 
-        effective_thread_id = thread_id or "default_user"
+        effective_thread_id = (thread_id or "").strip() or _resolve_default_thread_id()
         try:
             result = self._tool_calling_chat(text, thread_id=effective_thread_id)
         except Exception as exc:

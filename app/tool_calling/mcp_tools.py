@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 from app.mcp_client.client import McpClient
+from app.prompts.tool_calling_prompts import EXECUTE_DSL_TOOL_DESCRIPTION
 from app.tool_calling.registry import ToolRegistry, tool
 
 
@@ -78,65 +79,7 @@ def build_mcp_tool_registry(*, mcp: McpClient) -> ToolRegistry:
             "type": "function",
             "function": {
                 "name": "executeDsl",
-                "description": """# Role: Elasticsearch 专家级 DSL 翻译官
-
-# Context:
-你正在为工业级 ELK 日志系统生成查询 DSL。
-当前索引 Mapping 核心字段如下：
-- 时间字段: `@timestamp` (date)
-- 过滤字段 (Keyword 类型，使用 term 查询):
-    `service_name`, `log_level`, `env`, `region`, `trace_id`, `requestId`, `error_code`, `error_type`
-- 数值字段 (使用 range 或 term): `status_code` (integer)
-- 文本字段 (使用 match 查询):
-    `message` (ik_smart 分词), `raw_message`
-- 全文字段 (使用 term 精确匹配): `message.keyword`
-
-# Rules:
-0. 动态映射优先: 先基于当前 `indexName` 的实时 mapping 判断字段是否存在与字段类型，再生成 DSL。
-1. 时间驱动: 必须包含 `@timestamp` 的 `range` 过滤。当前时间由系统提供。
-2. 精确优先: 涉及 `trace_id`、`requestId`、`service_name` 时，必须使用 `term` 查询。
-3. 模糊搜索: 涉及日志内容搜索时，使用 `match` 查询 `message` 字段。
-4. 性能优化: 默认返回 `size: 10`，并按 `@timestamp` 降序排列。
-5. 严禁幻觉: 严禁使用 Mapping 以外的字段（如不存在的 `msg` 或 `serviceID`）。
-6. 类型一致性: 
-   - `term/terms` 仅用于 keyword/numeric/date/boolean（或 text 的 `.keyword` 子字段）
-   - `match/match_phrase` 仅用于 text
-   - `range` 仅用于 date/numeric
-   - `aggs.terms.field` 仅用于可聚合字段
-
-# Few-Shot Examples:
-
-User: 查一下最近10分钟 pay-service 报错 trace_id 为 T123 的日志
-Output:
-{
-  "query": {
-    "bool": {
-      "must": [
-        { "term": { "service_name": "pay-service" } },
-        { "term": { "trace_id": "T123" } },
-        { "range": { "@timestamp": { "gte": "now-10m" } } }
-      ]
-    }
-  },
-  "sort": [ { "@timestamp": { "order": "desc" } } ]
-}
-
-User: 查找昨天 env 为 prod 且状态码为 500 的错误日志，关键词是 "timeout"
-Output:
-{
-  "query": {
-    "bool": {
-      "must": [
-        { "term": { "env": "prod" } },
-        { "term": { "status_code": 500 } },
-        { "match": { "message": "timeout" } },
-        { "range": { "@timestamp": { "gte": "now-1d/d", "lt": "now/d" } } }
-      ]
-    }
-  }
-}
-
-`dsl` 参数必须是 JSON 字符串。""",
+                "description": EXECUTE_DSL_TOOL_DESCRIPTION,
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -184,6 +127,7 @@ Output:
                         "candidateK": {"type": "integer", "default": 30, "minimum": 5, "maximum": 200},
                         "bm25MinScore": {"type": "number", "default": 0.1},
                         "vectorMinScore": {"type": "number", "default": 0.7},
+                        "mmrLambda": {"type": "number", "default": 0.7},
                     },
                     "required": [],
                 },

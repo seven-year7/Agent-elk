@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from app.memory.config import (
+    MEMORY_DAILY_ARCHIVE_DIR,
     HARD_STOP_LIMIT,
     MEMORY_STORAGE_PATH,
     SUMMARY_MODEL,
@@ -87,6 +89,18 @@ def _build_summary_openai_client() -> OpenAI:
     return OpenAI(**kwargs)
 
 
+def _resolve_default_thread_id() -> str:
+    # @Step: 默认会话隔离 ID，避免多用户共享 default_user
+    return (
+        _env_str("AGENT_THREAD_ID")
+        or _env_str("THREAD_ID")
+        or _env_str("USER")
+        or _env_str("USERNAME")
+        or _env_str("COMPUTERNAME")
+        or "default_user"
+    )
+
+
 class MemoryManager:
     """双指标（轮数 / 估算 Token）触发摘要；落盘 JSON；主请求前可检查硬上限。"""
 
@@ -121,9 +135,10 @@ class MemoryManager:
         self.summary_model = _env_str("MEMORY_SUMMARY_MODEL") or SUMMARY_MODEL
 
         # @Agent_Logic: 默认使用 Redis session；每次交互可通过 thread_id 实现隔离。
-        self._default_thread_id = "default_user"
+        self._default_thread_id = _resolve_default_thread_id()
         self._lock = threading.RLock()
         self._stores: dict[str, RedisMemoryStore] = {}
+        self._daily_archive_dir = _PROJECT_ROOT / Path(MEMORY_DAILY_ARCHIVE_DIR)
         logger.info(
             "[INFO][Memory]: Redis 存储已启用（default_thread_id=%s）",
             self._default_thread_id,
@@ -179,6 +194,189 @@ class MemoryManager:
         store.save_state(self.history, self.summary, tokens=tokens, service="unknown")
 
     @staticmethod
+    def _safe_file_stem(raw: str) -> str:
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+        return stem or "default_user"
+
+    @staticmethod
+    def _normalize_text(raw: str, max_len: int = 260) -> str:
+        text = re.sub(r"\s+", " ", (raw or "").strip())
+        if len(text) <= max_len:
+            return text
+        return text[: max_len - 1] + "…"
+
+    def _build_recent_rounds(self, limit_rounds: int = 4) -> list[dict[str, str]]:
+        """
+        从 history 中提取最近 N 轮 user-assistant 对，确保“最近几轮”可读清晰。
+        """
+        rounds: list[dict[str, str]] = []
+        pending_user: str | None = None
+        for item in self.history:
+            role = str(item.get("role", "")).strip().lower()
+            content = self._normalize_text(str(item.get("content", "")))
+            if role == "user":
+                pending_user = content
+            elif role == "assistant":
+                if pending_user is not None:
+                    rounds.append({"user": pending_user, "assistant": content})
+                    pending_user = None
+                else:
+                    rounds.append({"user": "（无）", "assistant": content})
+        return rounds[-limit_rounds:]
+
+    def _extract_key_points_by_rules(self, summary_text: str, recent_rounds: list[dict[str, str]]) -> list[str]:
+        """
+        规则兜底：从 summary + 最近轮次提取高价值信号，避免原文直接存储。
+        """
+        corpus = " ".join([summary_text] + [f"{r['user']} {r['assistant']}" for r in recent_rounds])
+        if not corpus.strip():
+            return ["暂无可提取的关键内容"]
+
+        service_names = sorted(
+            {m.group(0) for m in re.finditer(r"\b[a-zA-Z0-9_-]+(?:service|svc)\b", corpus, flags=re.IGNORECASE)}
+        )
+        error_codes = sorted({m.group(0) for m in re.finditer(r"\b[A-Z]{1,8}-?\d{2,8}\b", corpus)})
+        trace_ids = sorted(
+            {
+                m.group(1)
+                for m in re.finditer(
+                    r"(?:trace[_-]?id|request[_-]?id)\s*[:=]?\s*([A-Za-z0-9_-]{6,64})",
+                    corpus,
+                    flags=re.IGNORECASE,
+                )
+            }
+        )
+
+        points: list[str] = []
+        points.append(
+            "核心结论: " + self._normalize_text(summary_text or "暂无明确结论，需结合最近轮次继续追问。", max_len=220)
+        )
+        points.append("服务范围: " + (", ".join(service_names[:6]) if service_names else "未识别到明确服务名"))
+        points.append("错误码: " + (", ".join(error_codes[:8]) if error_codes else "未识别到标准错误码"))
+        points.append("链路标识: " + (", ".join(trace_ids[:6]) if trace_ids else "未识别到 trace/request id"))
+
+        action_lines: list[str] = []
+        for r in recent_rounds[-2:]:
+            for sentence in re.split(r"[。；;!?]\s*", r["assistant"]):
+                s = sentence.strip()
+                if any(k in s for k in ("建议", "执行", "排查", "检查", "修复", "回滚", "重启")):
+                    action_lines.append(self._normalize_text(s, max_len=120))
+        if action_lines:
+            points.append("行动项: " + "；".join(action_lines[:4]))
+        else:
+            points.append("行动项: 暂无明确操作建议")
+        return points
+
+    def _extract_key_points(self, summary_text: str, recent_rounds: list[dict[str, str]]) -> list[str]:
+        """
+        小模型优先提取关键内容；失败时回退规则提取。
+        """
+        corpus = " ".join([summary_text] + [f"{r['user']} {r['assistant']}" for r in recent_rounds]).strip()
+        if not corpus:
+            return ["暂无可提取的关键内容"]
+
+        prompt = (
+            "你是运维会话压缩助手。请从输入中提取关键内容，返回严格 JSON，不要输出其它文本。\n"
+            "JSON schema:\n"
+            "{\n"
+            '  "core_conclusion": "string",\n'
+            '  "service_scope": ["string"],\n'
+            '  "error_codes": ["string"],\n'
+            '  "trace_ids": ["string"],\n'
+            '  "action_items": ["string"]\n'
+            "}\n"
+            "要求：\n"
+            "1) 没有信息时填空字符串或空数组；\n"
+            "2) action_items 最多 4 条，简洁可执行；\n"
+            "3) 保留原始标识符，不要编造。\n\n"
+            f"输入内容：\n{corpus}"
+        )
+
+        try:
+            response = self._summary_client.chat.completions.create(
+                model=self.summary_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError("invalid key-point json root")
+
+            core = self._normalize_text(str(parsed.get("core_conclusion", "")).strip(), max_len=220)
+            services = [self._normalize_text(str(x), max_len=60) for x in parsed.get("service_scope", []) if str(x).strip()]
+            codes = [self._normalize_text(str(x), max_len=60) for x in parsed.get("error_codes", []) if str(x).strip()]
+            traces = [self._normalize_text(str(x), max_len=80) for x in parsed.get("trace_ids", []) if str(x).strip()]
+            actions = [self._normalize_text(str(x), max_len=120) for x in parsed.get("action_items", []) if str(x).strip()]
+
+            points: list[str] = []
+            points.append("核心结论: " + (core or "暂无明确结论，需结合最近轮次继续追问。"))
+            points.append("服务范围: " + (", ".join(services[:6]) if services else "未识别到明确服务名"))
+            points.append("错误码: " + (", ".join(codes[:8]) if codes else "未识别到标准错误码"))
+            points.append("链路标识: " + (", ".join(traces[:6]) if traces else "未识别到 trace/request id"))
+            points.append("行动项: " + ("；".join(actions[:4]) if actions else "暂无明确操作建议"))
+            logger.debug("[DEBUG][Memory]: 关键内容提取使用小模型成功")
+            return points
+        except Exception as exc:
+            logger.warning("[WARN][Memory]: 小模型关键提取失败，回退规则提取: %s", exc)
+            return self._extract_key_points_by_rules(summary_text, recent_rounds)
+
+    def _save_daily_markdown(self, thread_id: str) -> None:
+        """
+        将当前会话压缩为“每日一个 md 文件（关键内容提取 + 最近轮次）”。
+        文件名：YYYY-MM-DD_{thread_id}.md
+        """
+        date_key = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+        safe_tid = self._safe_file_stem(thread_id)
+        target = self._daily_archive_dir / f"{date_key}_{safe_tid}.md"
+        self._daily_archive_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_text = self.summary.strip()
+        recent_rounds = self._build_recent_rounds(limit_rounds=4)
+        key_points = self._extract_key_points(summary_text, recent_rounds)
+        lines = [
+            "# 每日记忆压缩",
+            "",
+            f"- 日期: {date_key}",
+            f"- thread_id: `{thread_id}`",
+            f"- 更新于: {datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')}",
+            "",
+            "## 关键内容提取",
+        ]
+        for point in key_points:
+            lines.append(f"- {point}")
+
+        lines.extend(
+            [
+                "",
+                "## 最近几轮（清晰保留）",
+            ]
+        )
+        if recent_rounds:
+            for idx, round_item in enumerate(recent_rounds, start=1):
+                lines.append(f"### 第{idx}轮")
+                lines.append(f"- 用户: {round_item['user']}")
+                lines.append(f"- 助手: {round_item['assistant']}")
+                lines.append("")
+        else:
+            lines.append("- （暂无最近轮次）")
+            lines.append("")
+
+        lines.extend(
+            [
+                "## 原始摘要（供追溯）",
+                summary_text or "（暂无摘要）",
+                "",
+            ]
+        )
+
+        try:
+            target.write_text("\n".join(lines), encoding="utf-8")
+            logger.debug("[DEBUG][Memory]: 已写入每日压缩文档 %s", target)
+        except OSError as exc:
+            logger.warning("[WARN][Memory]: 写入每日压缩文档失败: %s", exc)
+
+    @staticmethod
     def _estimate_tokens(text: str) -> int:
         if not text:
             return 0
@@ -220,6 +418,7 @@ class MemoryManager:
                     self._trim_history_for_token_budget()
 
             self._save_state_to_store(tid, tokens=next_tokens_total)
+            self._save_daily_markdown(tid)
 
     def append_key_log_snippets(self, snippets: str, thread_id: str | None = None) -> None:
         """
@@ -246,6 +445,7 @@ class MemoryManager:
 
             self.summary = merged
             self._save_state_to_store(tid, tokens=existing_tokens)
+            self._save_daily_markdown(tid)
 
     def _generate_summary(self) -> None:
         if len(self.history) <= 2:

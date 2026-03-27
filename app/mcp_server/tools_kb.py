@@ -10,6 +10,7 @@ import concurrent.futures
 import hashlib
 import logging
 import os
+import re
 from typing import Any
 
 from elasticsearch import Elasticsearch
@@ -353,6 +354,59 @@ def _rrf_fuse(
     return fused_hits
 
 
+def _tokenize_for_mmr(text: str) -> set[str]:
+    # @Agent_Logic: 统一中英文/数字分词，供轻量去冗余相似度计算
+    chunks = re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", text.lower())
+    return {c for c in chunks if c}
+
+
+def _mmr_text_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
+    text_a = f"{_safe_text(a.get('title'))} {_safe_text(a.get('content'))}"
+    text_b = f"{_safe_text(b.get('title'))} {_safe_text(b.get('content'))}"
+    tokens_a = _tokenize_for_mmr(text_a)
+    tokens_b = _tokenize_for_mmr(text_b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    inter = len(tokens_a.intersection(tokens_b))
+    union = len(tokens_a.union(tokens_b))
+    if union <= 0:
+        return 0.0
+    return float(inter) / float(union)
+
+
+def _mmr_select(
+    hits: list[dict[str, Any]],
+    *,
+    top_k: int,
+    lambda_mult: float = 0.7,
+) -> list[dict[str, Any]]:
+    # @Step: MMR - 在高相关候选中抑制重复案例，提升证据多样性
+    if top_k <= 0 or not hits:
+        return []
+    if len(hits) <= top_k:
+        return hits[:]
+
+    max_relevance = max(float(h.get("fused_score") or 0.0) for h in hits) or 1.0
+    selected: list[dict[str, Any]] = []
+    remaining = hits[:]
+
+    while remaining and len(selected) < top_k:
+        best_idx = 0
+        best_score = float("-inf")
+        for idx, cand in enumerate(remaining):
+            relevance = float(cand.get("fused_score") or 0.0) / max_relevance
+            if not selected:
+                mmr_score = relevance
+            else:
+                max_sim = max(_mmr_text_similarity(cand, s) for s in selected)
+                mmr_score = (lambda_mult * relevance) - ((1.0 - lambda_mult) * max_sim)
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_idx = idx
+        selected.append(remaining.pop(best_idx))
+    return selected
+
+
 def handle_query_knowledge_base_hybrid(auth: AuthInfo, args: dict[str, Any]) -> ToolResponse:
     tool = "queryKnowledgeBaseHybrid"
     dense_query = _build_summary_query_text(args)
@@ -584,17 +638,23 @@ def handle_query_knowledge_base_hybrid(auth: AuthInfo, args: dict[str, Any]) -> 
         )
         return resp
 
+    mmr_lambda = float(args.get("mmrLambda") or 0.7)
+    if mmr_lambda < 0.0:
+        mmr_lambda = 0.0
+    if mmr_lambda > 1.0:
+        mmr_lambda = 1.0
     fused = _rrf_fuse(bm25_hits, vector_hits) if vector_hits else _rrf_fuse(bm25_hits, [])
-    resp.hits = fused[:top_k]
+    mmr_pool = fused[:candidate_k]
+    resp.hits = _mmr_select(mmr_pool, top_k=top_k, lambda_mult=mmr_lambda)
     resp.summary = ToolSummary(
         total_hits=len(fused),
         returned_hits=len(resp.hits),
         index=index_name,
-        mode="hybrid_rrf",
+        mode="hybrid_rrf_mmr",
         top1_title=(resp.hits[0].get("title") if resp.hits else None),
         notes=(
-            f"BM25+Vector fused by RRF (bm25_hits={len(bm25_hits)}, vector_hits={len(vector_hits)}, "
-            f"client={client_source})"
+            f"BM25+Vector fused by RRF and reranked by MMR (pool={len(mmr_pool)}, lambda={mmr_lambda:.2f}, "
+            f"bm25_hits={len(bm25_hits)}, vector_hits={len(vector_hits)}, client={client_source})"
         ),
     )
     return resp

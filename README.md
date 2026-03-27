@@ -76,14 +76,10 @@ Myself/
 │   ├── guides/
 │   └── reference/
 ├── app/
-│   ├── config/           # 核心运行配置 +（规划）NL→DSL 等模板，见 §6
-│   │   ├── __init__.py
-│   │   ├── prompt_templates.py
-│   │   └── settings.py
 │   ├── prompts/          # Phase 2.2：运维对话提示词仓库（与 agent 代码解耦）
 │   │   ├── __init__.py
 │   │   ├── templates.py  # SYSTEM_PROMPT、ANALYSIS_PROMPT_TMPL、INTENT_EXTRACT_TMPL
-│   │   └── router_prompts.py # Phase 2.15：意图路由提示词（OPS_QUERY / GENERAL_CHAT）
+│   │   └── tool_calling_prompts.py # RAG_EXECUTION_CONSTRAINT_PROMPT、FORCE_SIMPLE_DSL_PROMPT、EXECUTE_DSL_TOOL_DESCRIPTION
 │   ├── memory/           # Phase 2.5：对话历史 + 小模型摘要压缩；Phase 2.7：config 解耦阈值；Phase 2.9：Redis 存储层
 │   │   ├── __init__.py
 │   │   ├── config.py     # TURN_LIMIT、TOKEN 阈值、SUMMARY_MODEL、MEMORY_STORAGE_PATH 等默认项
@@ -91,8 +87,6 @@ Myself/
 │   │   └── redis_store.py # RedisMemoryStore（Hash 字段级存取封装）
 │   ├── core/             # Agent 核心逻辑（主链路：tool-calling）
 │   │   ├── config.py     # Phase 2.7：MAIN_LLM_TEMPERATURE、DEFAULT_LLM_MODEL
-│   │   ├── gateway.py    # 历史网关实现（当前主流程默认不走该文件）
-│   │   ├── router.py     # 历史意图路由实现（当前主流程默认不走该文件）
 │   │   └── agent_brain.py # ELKAgent：system prompt + tool-calling 编排入口
 │   ├── tools/            # 历史工具层（MCP 上线后主链路通常不直接调用）
 │   │   ├── config.py     # Phase 2.7：ES_DEFAULT_URL、SEARCH_LOGS_DEFAULT_TOP_K、kNN 候选参数
@@ -116,16 +110,14 @@ Myself/
 ├── seed_demo_logs.py     # Phase 1.2：18 条中文多场景日志 + 向量写入
 ├── ingest_mock_logs.py   # Phase 1.2：8 条英文关联场景（支付/网关/DB）+ 向量写入
 ├── main.py               # Phase 2.1.3：统一 CLI 入口（python main.py）
-├── requirements.txt      # Python 依赖（与 §2 及 app/config 对齐）
+├── requirements.txt      # Python 依赖（与 §2 对齐）
 ├── README.md             # 本手册
 └── .cursor/rules/        # Cursor 项目规则
 ```
 
-## 6. 配置与环境变量（`app/config`）
+## 6. 配置与环境变量（运行时环境变量）
 
-- **运维对话提示词（Phase 2.2）：** `app/prompts/templates.py` 集中维护 **`SYSTEM_PROMPT`**、**`ANALYSIS_PROMPT_TMPL`**（占位符：`current_time`、`user_query`、`logs_context`）、**`INTENT_EXTRACT_TMPL`**（进阶意图抽取，预留）；`app/core/agent_brain.py` 仅负责组装与调用。
-- **（规划）NL→DSL 等：** `app/config/prompt_templates.py` 仍预留用于自然语言转 Elasticsearch DSL、纠错等模板，与对话仓库分工。
-- **核心配置：** `app/config/settings.py` 计划提供 `CoreSettings` 与 `get_core_settings()`，并在导入时通过 `python-dotenv` 加载仓库根目录下的 `.env`（若存在），再读取环境变量（以实现为准）。
+- **运维对话提示词（Phase 2.2）：** `app/prompts/templates.py` 维护基础对话模板（`SYSTEM_PROMPT/ANALYSIS_PROMPT_TMPL/INTENT_EXTRACT_TMPL`），`app/prompts/tool_calling_prompts.py` 维护 tool-calling 相关提示词（RAG 执行约束、DSL 失败降级提示、`executeDsl` 工具描述）；`app/core/agent_brain.py` 与 `app/tool_calling/*` 仅负责组装与调用。
 - **Phase 2.7（分布式参数）：** 各模块默认数值集中在同级 `config.py`：`app/memory/config.py`（轮数/Token 压缩阈值、摘要模型、记忆落盘相对路径、硬上限默认）、`app/core/config.py`（主模型温度与默认模型 ID）、`app/tools/config.py`（`ES_URL` 回退地址、检索 `top_k`、kNN `num_candidates` 计算参数）。环境变量（如 `MEMORY_TOKEN_LIMIT`、`ES_URL`）仍可覆盖对应行为。
 
 根目录 **`.env`** 当前约定如下（请填入真实值，**勿提交**密钥；若使用 Git，请将 `.env` 加入 `.gitignore`）：
@@ -156,9 +148,8 @@ Myself/
 | `REDIS_PORT` | **Phase 2.9**：Redis 端口；默认 `6379` |
 | `REDIS_DB` | **Phase 2.9**：Redis 数据库编号；默认 `0` |
 | `SESSION_PREFIX` | **Phase 2.9**：Redis 存储前缀；Key 格式为 `SESSION_PREFIX + thread_id`，默认 `elk:agent:session:` |
-| `MEMORY_TTL` | **Phase 2.9**：会话记忆 TTL（秒）；默认 `3600`（1 小时） |
-
-后续在 `settings.py` 中实现时，仍可支持 `ELASTICSEARCH_URL`、`ELASTICSEARCH_API_KEY`、`DEFAULT_LLM_MODEL`、`LOG_LEVEL` 等扩展项及默认值。
+| `MEMORY_TTL` | **Phase 2.9**：会话记忆 TTL（秒）；默认 `86400`（1 天） |
+| `MEMORY_DAILY_ARCHIVE_DIR` | 每日记忆压缩文档目录（相对仓库根目录），默认 `docs/memory-daily`；按天生成 `YYYY-MM-DD_{thread_id}.md`，其中“关键内容提取”采用小模型抽取（失败自动回退规则抽取），并保留最近几轮与原始摘要追溯 |
 
 安装依赖：`python -m pip install -r requirements.txt`（Windows PowerShell 5.x 中请用分号串联命令，避免使用 `&&`）。
 
@@ -202,118 +193,6 @@ python -m uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8000
   - 失败后：若返回 `DSL_FIELD_TYPE_MISMATCH` / `DSL_NOT_ALLOWED` / `INVALID_DSL_JSON`，编排器会把错误回喂模型触发 DSL 重写，最多 2 次。
 - `queryKnowledgeBaseHybrid`：知识库混合召回（BM25 + 向量 + RRF），用于在日志事实之后补充 SOP/案例证据，提升 RCA 准确率与可执行性。
 - 核心原则：**工具选择权在模型**，代码不再做复杂路由器来决定调用哪个工具
-## 6.1 模型连通性测试（小模型 vs 大模型）
-
-当你遇到“**小模型一直报错/限流，但大模型正常**”时，先跑这个独立脚本，可快速判断是 **OpenRouter free 模型上游限流/额度** 还是 **本地代码/配置问题**。
-
-运行方式：
-
-```bash
-python test/test_llm_connectivity.py
-```
-
-脚本会读取仓库根目录 `.env`（若存在）与环境变量，并分别测试：
-- **小模型**：`MEMORY_SUMMARY_MODEL`（默认 `xiaomi/mimo-v2-flash`）
-- **大模型**：`LLM_MODEL`（默认 `openai/gpt-4o-mini`，回退 `DEFAULT_LLM_MODEL`）
-
-如何解读常见报错：
-- **429 / Rate limit exceeded**：通常为 **free 小模型上游限流**（高峰期很常见）。脚本会尽量打印 `X-RateLimit-*` / `Retry-After` 相关响应头（若 SDK 暴露）。
-- **402 / Spend limit exceeded**：通常为该 API Key 设置了花费上限（或额度不足），与模型本身无关。
-- **两者都失败**：优先检查 `OPENROUTER_API_KEY` / `OPENROUTER_BASE_URL`（或回退的 `OPENAI_API_KEY` / `OPENAI_BASE_URL`）是否正确、网络是否可达。
-
-## 6.2 Elasticsearch 证书专项测试（TLS）
-
-当你怀疑是 ES 证书导致连接/查询失败时，可运行：
-
-```bash
-python test/test_es_tls_certificate.py
-```
-
-该脚本会执行两层验证：
-- `requests` 握手层（快速判断证书链、CA、校验开关是否正确）
-- `elasticsearch` SDK 层（与项目真实客户端参数一致，验证实际可用性）
-
-依赖环境变量：`ES_URL`、`ES_VERIFY_CERTS`、`ES_CA_CERTS`、`ES_API_KEY`（或 `ES_USERNAME` + `ES_PASSWORD`）。
-
-**Elasticsearch 索引与 IK：** `intelligent_logs_v1` 的 `message` 字段映射为 **IK `ik_smart`**，节点需安装 **`analysis-ik`** 插件。若该索引曾以其他 analyzer（如 `standard`）创建过，Elasticsearch **不会**自动改 mapping，需先在 Dev Tools 执行 `DELETE /intelligent_logs_v1`（会删数据）后再运行 `python check_env.py`。
-
-**Phase 1.2（数据灌溉 / 记忆灌溉）：** 建议先 `python check_env.py` 检查 ES 与索引，再运行 `python seed_demo_logs.py`（**18 条** 中文场景）或 `python ingest_mock_logs.py`（**8 条** 英文关联场景）。写入字段需符合 `log_schema`。
-
-**Phase 2.1（Agent 工具层）：** `app/tools/log_tools.py` 提供 `search_logs_tool`（别名 `es_search_tool`）用于日志检索（MCP 链路下通常由 `executeDsl`/`queryByTimeRange` 完成）。完整 Thought → Action → Observation 循环可在 `app/core` 用 LangGraph / 自研循环衔接。
-
-**Phase 2.1（续，大脑与入口）：** `app/core/agent_brain.py` 中 **`ELKAgent`** 采用 MCP tool-calling 流程，由模型在 `queryByTimeRange / queryByRequestId / executeDsl / queryKnowledgeBaseHybrid` 间自主选择，并执行“日志事实 + 知识证据”的 RAG 增强分析。对话客户端优先 **`OPENROUTER_API_KEY`** + **`OPENROUTER_BASE_URL`**（默认 `https://openrouter.ai/api/v1`），否则使用 **`OPENAI_API_KEY`**（可选 **`OPENAI_BASE_URL`**）。**交互入口（Phase 2.1.3）：** **`python main.py`** — 运维对话式 CLI；亦可 `python -m app.core.agent_brain`（内置 REPL）；或在代码中 `from app.core.agent_brain import agent` 后调用 `agent.chat("你的问题")`。
-
-## 6.3 知识库向量化入库与校验（与当前实现对齐）
-
-知识库源文件：`app/data/standardized_ops_knowledge_base.csv`  
-默认知识库索引：`elk_agent_knowledge_base`
-
-入库前建议先确认 MCP/ES 配置可用，再执行：
-
-```bash
-python ingest_standardized_ops_kb.py --dry-run --limit 5
-python ingest_standardized_ops_kb.py
-```
-
-入库后验证（文档数量、`content_vector` 存在率、维度一致性）：
-
-```bash
-python test/test_standardized_ops_kb_ingest.py
-```
-
-RAG 业务召回评测（不使用 ID 命中率）：
-
-```bash
-python test/eval_rag_business_recall.py --limit 30
-```
-
-指标定义：
-- `topk_category_recall`：TopK 中是否命中同 `error_code` 或同故障类别（业务相关召回）
-- `topk_executable_hit_rate`：TopK 中是否包含可执行处置与验证步骤（`resolution_steps` + `verification_steps`）
-- `evidence_consistency_rate`：TopK 证据是否与日志关键信号一致（`service_name` 或 `error_code`）
-
-分析原则：
-- 先给 `LogFacts`（MCP 日志事实），再给 `KBEvidence`（RAG 证据），最后给结论与处置；
-- 若两者不一致，以日志事实为准并显式说明冲突点。
-
-`queryKnowledgeBaseHybrid` 检索策略参数（调优）：
-- `topK`：最终返回条数（默认 5）
-- `candidateK`：BM25/向量各自候选池（默认 30，自动保证 `candidateK >= topK`）
-- `bm25MinScore`：BM25 分数阈值（默认 0.1，>0 时过滤低分项）
-- `vectorMinScore`：向量分数阈值（默认 0.7，>0 时过滤低分项）
-- `strictFilter`：是否将 `serviceName/errorCode` 作为硬过滤（默认 `false`，默认仅作为软约束加权）
-- `debug`：按请求开启检索诊断摘要（默认 `false`，仅回传 DSL 结构摘要/命中统计，不回传敏感全文）
-- 空检索快速退出：当 BM25 与向量候选都为空时，直接返回空结果并标注 `empty retrieval fast exit`
-
-当前知识库分类字段状态（重要）：
-- 数据源 CSV 中存在 `category_l1/l2/l3` 字段；
-- 但 `app/database/schema.py` 当前 Mapping 未定义这些字段；
-- `queryKnowledgeBaseHybrid` 也未基于 `category_l1/l2/l3` 做过滤或加权。
-- 结论：**`case / error_code / sop` 三级分类尚未真正接入线上检索链路**。
-
-Hybrid 零召回排查建议（编码与链路）：
-- 先确认 Agent→MCP 使用 UTF-8 JSON：客户端固定 `Content-Type: application/json; charset=utf-8`，服务端日志会记录 `payload_sha8/payload_bytes` 用于端到端一致性对比。
-- 对 `queryKnowledgeBaseHybrid` 开启 `debug=true`（或环境变量 `MCP_KB_DEBUG=true`），观察返回中的 `debugDetails`：
-  - `clientSource`：当前命中来自 MCP 主客户端还是 `ES_URL` fallback。
-  - `indexVisibleInPrimary/indexVisibleInEffective`：索引可见性是否一致。
-  - `denseQuerySha8/sparseQuerySha8` 与长度：确认中文摘要是否在链路中被破坏。
-  - `bm25DslShape/vectorDslShape`：确认双检索路径都被执行。
-- 当前在线检索采用“双 query 策略”：
-  - BM25 使用 `sparseQueryText`（更短关键词串，降低模板噪音）；
-  - 向量检索使用 `summaryQueryText`（对齐离线向量语义：`title + symptom + root_cause + content + resolution_steps`）。
-- 若 `errors` 含 `EMPTY_RETRIEVAL_EXECUTED_NO_HITS`，代表“执行成功但无命中”；若含 `EMPTY_RETRIEVAL_EMBEDDING_FAILED`，优先检查 embedding 配置。
-
-**Phase 2.2（提示词解耦）：** 系统角色与用户侧「检索结果 + 问题」缝合模板迁至 **`app/prompts/`**，便于独立迭代提示词工程；`INTENT_EXTRACT_TMPL` 供后续结构化意图抽取使用。
-
-**Phase 2.5（记忆架构与小模型级联）：** **`app/memory/manager.py`** 中 **`MemoryManager`** 维护多轮对话；超过 **`MEMORY_HISTORY_THRESHOLD`**（默认 8 条消息）时，用 **`MEMORY_SUMMARY_MODEL`**（默认 **`xiaomi/mimo-v2-flash`**）压缩旧轮，仅保留最近 2 条原文 + 摘要 system 段。**主模型**（`LLM_MODEL`）仍在 `agent_brain` 中做带检索上下文的推理；成功回复后向 `memory_bus` 写入「用户原话 + 助手结论」（不含整段 ES 模板），避免摘要语料膨胀。
-
-**Phase 2.6（双指标、持久化与安全兜底）：** 在 2.5 基础上增加 **轮数 OR 估算 Token**（**`MEMORY_TOKEN_LIMIT`**，默认 3000）双触发摘要；**`config/memory_state.json`**（可 **`MEMORY_STATE_PATH`** 覆盖）持久化 `summary` / `history`，启动时自动加载；**`check_safety_overflow`** 在调用主模型前校验「摘要 + 历史 + 主 system + 本轮检索模板」估算 Token 是否低于 **`MEMORY_HARD_STOP_LIMIT`**（默认 7000），否则直接返回提示并 **不请求 API**，避免上下文过长导致报错崩溃。摘要失败时 **Trim** 最旧消息兜底。
-
-**Phase 2.7（配置解耦）：** 上述默认值在代码中的「单一来源」分别为 **`app/memory/config.py`**、**`app/core/config.py`**、**`app/tools/config.py`**；`.env` 覆盖项与 §6 表格一致。
-
-**Phase 2.9（Redis 结构化存储）：** 将短期记忆从本地 JSON 文件切换为 Redis Hash：每个会话（Session）使用 Key `elk:agent:session:{thread_id}` 隔离存取，并对话更新时写入 `summary`、`history`、`stats:token_count`、`meta:service`、`meta:updated_at` 等字段；同时设置会话 TTL（默认 `MEMORY_TTL=3600`），避免存储爆炸。
-
-
 ## 7. 文档体系
 
 | 位置 | 说明 |
