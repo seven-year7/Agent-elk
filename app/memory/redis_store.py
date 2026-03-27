@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from app.memory.config import (
@@ -60,6 +61,15 @@ class RedisMemoryStore:
             decode_responses=True,
         )
 
+    @staticmethod
+    def _next_day_end_ts() -> int:
+        """
+        返回“当前本地时区当天 23:59:59”对应的 unix 时间戳。
+        """
+        now_local = datetime.now().astimezone()
+        end_local = now_local.replace(hour=23, minute=59, second=59, microsecond=0)
+        return int(end_local.timestamp())
+
     def save_state(
         self,
         history: list[dict[str, str]],
@@ -72,6 +82,7 @@ class RedisMemoryStore:
         通过 pipeline 提升效率并减少往返次数。
         """
         now_ts = int(time.time())
+        end_of_day_ts = self._next_day_end_ts()
         history_json = json.dumps(history, ensure_ascii=False)
 
         mapping: dict[str, Any] = {
@@ -87,7 +98,7 @@ class RedisMemoryStore:
         if self._redis is None:
             self._memory_fallback[self.key] = {
                 **mapping,
-                "_expires_at": now_ts + int(self.ttl),
+                "_expires_at": end_of_day_ts,
             }
             logger.warning(
                 "[WARN][RedisStore]: Redis 不可用，已写入内存回退（thread_id=%s）",
@@ -98,9 +109,14 @@ class RedisMemoryStore:
         try:
             pipe = self._redis.pipeline()
             pipe.hset(self.key, mapping=mapping)
-            pipe.expire(self.key, self.ttl)
+            # @Step: 2 - 按“日切”过期：每天 23:59:59 到期
+            pipe.expireat(self.key, end_of_day_ts)
             pipe.execute()
-            logger.debug("[DEBUG][RedisStore]: save_state OK（key=%s, ttl=%ss）", self.key, self.ttl)
+            logger.debug(
+                "[DEBUG][RedisStore]: save_state OK（key=%s, expire_at=%s）",
+                self.key,
+                datetime.fromtimestamp(end_of_day_ts, tz=timezone.utc).isoformat(),
+            )
         except Exception as exc:  # pragma: no cover
             # @Security: 不在日志中输出任何敏感内容（history 可能含对话）。
             logger.error("[ERROR][RedisStore]: Redis 写入失败（key=%s）：%s", self.key, exc)
@@ -160,6 +176,7 @@ class RedisMemoryStore:
             "summary": summary,
             "tokens": tokens,
             "service": service,
+            "updated_at": int(data.get("meta:updated_at", 0) or 0),
         }
 
     def clear(self) -> None:

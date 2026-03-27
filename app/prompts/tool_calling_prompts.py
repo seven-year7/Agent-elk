@@ -1,7 +1,7 @@
 """
  * @Module: app/prompts/tool_calling_prompts
- * @Description: Tool-calling 场景提示词常量（编排约束 + DSL 降级 + executeDsl 工具说明）
- * @Interface: RAG_EXECUTION_CONSTRAINT_PROMPT, FORCE_SIMPLE_DSL_PROMPT, EXECUTE_DSL_TOOL_DESCRIPTION
+ * @Description: Tool-calling + Memory 场景提示词常量（编排约束 + DSL 降级 + executeDsl + 记忆压缩提取）
+ * @Interface: RAG_EXECUTION_CONSTRAINT_PROMPT, FORCE_SIMPLE_DSL_PROMPT, EXECUTE_DSL_TOOL_DESCRIPTION, MEMORY_*_PROMPT_TMPL
 """
 
 RAG_EXECUTION_CONSTRAINT_PROMPT = (
@@ -79,3 +79,26 @@ Output:
 }
 
 `dsl` 参数必须是 JSON 字符串。"""
+
+MEMORY_SUMMARY_PROMPT_TMPL = """请简要总结以下运维对话，保留关键服务名、TraceID 和错误结论：
+
+{dialog_content}
+"""
+
+MEMORY_KEYPOINT_JSON_PROMPT_TMPL = """你是运维会话压缩助手。请从输入中提取关键内容，返回严格 JSON，不要输出其它文本。
+JSON schema:
+{{
+  "core_conclusion": "string",
+  "service_scope": ["string"],
+  "error_codes": ["string"],
+  "trace_ids": ["string"],
+  "action_items": ["string"]
+}}
+要求：
+1) 没有信息时填空字符串或空数组；
+2) action_items 最多 4 条，简洁可执行；
+3) 保留原始标识符，不要编造。
+
+输入内容：
+{input_content}
+"""

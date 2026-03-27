@@ -25,6 +25,7 @@ from app.memory.config import (
     TOKEN_COMPRESSION_THRESHOLD,
     TURN_LIMIT,
 )
+from app.prompts import MEMORY_KEYPOINT_JSON_PROMPT_TMPL, MEMORY_SUMMARY_PROMPT_TMPL
 from app.memory.redis_store import RedisMemoryStore
 
 logger = logging.getLogger(__name__)
@@ -275,22 +276,7 @@ class MemoryManager:
         if not corpus:
             return ["暂无可提取的关键内容"]
 
-        prompt = (
-            "你是运维会话压缩助手。请从输入中提取关键内容，返回严格 JSON，不要输出其它文本。\n"
-            "JSON schema:\n"
-            "{\n"
-            '  "core_conclusion": "string",\n'
-            '  "service_scope": ["string"],\n'
-            '  "error_codes": ["string"],\n'
-            '  "trace_ids": ["string"],\n'
-            '  "action_items": ["string"]\n'
-            "}\n"
-            "要求：\n"
-            "1) 没有信息时填空字符串或空数组；\n"
-            "2) action_items 最多 4 条，简洁可执行；\n"
-            "3) 保留原始标识符，不要编造。\n\n"
-            f"输入内容：\n{corpus}"
-        )
+        prompt = MEMORY_KEYPOINT_JSON_PROMPT_TMPL.format(input_content=corpus)
 
         try:
             response = self._summary_client.chat.completions.create(
@@ -321,25 +307,37 @@ class MemoryManager:
             logger.warning("[WARN][Memory]: 小模型关键提取失败，回退规则提取: %s", exc)
             return self._extract_key_points_by_rules(summary_text, recent_rounds)
 
-    def _save_daily_markdown(self, thread_id: str) -> None:
+    def _save_daily_markdown(
+        self,
+        thread_id: str,
+        summary_text: str | None = None,
+        history: list[dict[str, str]] | None = None,
+        archive_dt: datetime | None = None,
+    ) -> None:
         """
         将当前会话压缩为“每日一个 md 文件（关键内容提取 + 最近轮次）”。
-        文件名：YYYY-MM-DD_{thread_id}.md
+        文件名：YYYYMMDD_HHMMSS_{thread_id}.md（时间 + THREAD_ID）
         """
-        date_key = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+        local_now = archive_dt or datetime.now(timezone.utc).astimezone()
+        date_key = local_now.strftime("%Y-%m-%d")
+        file_ts = local_now.strftime("%Y%m%d_%H%M%S")
         safe_tid = self._safe_file_stem(thread_id)
-        target = self._daily_archive_dir / f"{date_key}_{safe_tid}.md"
+        target = self._daily_archive_dir / f"{file_ts}_{safe_tid}.md"
         self._daily_archive_dir.mkdir(parents=True, exist_ok=True)
 
-        summary_text = self.summary.strip()
+        effective_summary = (summary_text if summary_text is not None else self.summary).strip()
+        effective_history = history if history is not None else self.history
+        original_history = self.history
+        self.history = effective_history
         recent_rounds = self._build_recent_rounds(limit_rounds=4)
-        key_points = self._extract_key_points(summary_text, recent_rounds)
+        self.history = original_history
+        key_points = self._extract_key_points(effective_summary, recent_rounds)
         lines = [
             "# 每日记忆压缩",
             "",
             f"- 日期: {date_key}",
             f"- thread_id: `{thread_id}`",
-            f"- 更新于: {datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')}",
+            f"- 更新于: {local_now.replace(microsecond=0).isoformat().replace('+00:00', 'Z')}",
             "",
             "## 关键内容提取",
         ]
@@ -365,7 +363,7 @@ class MemoryManager:
         lines.extend(
             [
                 "## 原始摘要（供追溯）",
-                summary_text or "（暂无摘要）",
+                effective_summary or "（暂无摘要）",
                 "",
             ]
         )
@@ -375,6 +373,43 @@ class MemoryManager:
             logger.debug("[DEBUG][Memory]: 已写入每日压缩文档 %s", target)
         except OSError as exc:
             logger.warning("[WARN][Memory]: 写入每日压缩文档失败: %s", exc)
+
+    def _archive_and_clear_if_cross_day(self, thread_id: str) -> None:
+        """
+        若 Redis 中最后更新时间属于前一天，则先归档为 md，再清空 Redis（先压缩后删除）。
+        """
+        store = self._get_store(thread_id)
+        state = store.load_state()
+        if not state:
+            return
+
+        updated_at = int(state.get("updated_at", 0) or 0)
+        if updated_at <= 0:
+            return
+
+        last_local = datetime.fromtimestamp(updated_at).astimezone()
+        now_local = datetime.now(timezone.utc).astimezone()
+        if last_local.date() >= now_local.date():
+            return
+
+        end_of_day_local = last_local.replace(hour=23, minute=59, second=59, microsecond=0)
+        archived_summary = str(state.get("summary", "") or "")
+        archived_history = state.get("history", [])
+        if not isinstance(archived_history, list):
+            archived_history = []
+
+        self._save_daily_markdown(
+            thread_id=thread_id,
+            summary_text=archived_summary,
+            history=archived_history,
+            archive_dt=end_of_day_local,
+        )
+        store.clear()
+        logger.info(
+            "[INFO][Memory]: 跨天归档完成并清理 Redis（thread_id=%s, archive_time=%s）",
+            thread_id,
+            end_of_day_local.isoformat(),
+        )
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -396,6 +431,7 @@ class MemoryManager:
     def add_message(self, role: str, content: str, thread_id: str | None = None) -> None:
         tid = self._resolve_thread_id(thread_id)
         with self._lock:
+            self._archive_and_clear_if_cross_day(tid)
             existing_tokens = self._load_state_from_store(tid)
             self.history.append({"role": role, "content": content})
 
@@ -418,7 +454,6 @@ class MemoryManager:
                     self._trim_history_for_token_budget()
 
             self._save_state_to_store(tid, tokens=next_tokens_total)
-            self._save_daily_markdown(tid)
 
     def append_key_log_snippets(self, snippets: str, thread_id: str | None = None) -> None:
         """
@@ -433,6 +468,7 @@ class MemoryManager:
             return
 
         with self._lock:
+            self._archive_and_clear_if_cross_day(tid)
             existing_tokens = self._load_state_from_store(tid)
 
             prefix = "【关键日志片段】\n"
@@ -445,7 +481,6 @@ class MemoryManager:
 
             self.summary = merged
             self._save_state_to_store(tid, tokens=existing_tokens)
-            self._save_daily_markdown(tid)
 
     def _generate_summary(self) -> None:
         if len(self.history) <= 2:
@@ -458,13 +493,10 @@ class MemoryManager:
             self._history_token_estimate(),
         )
 
-        prompt_lines = [
-            "请简要总结以下运维对话，保留关键服务名、TraceID 和错误结论：",
-            "",
-        ]
+        prompt_lines: list[str] = []
         for msg in self.history[:-2]:
             prompt_lines.append(f"{msg['role']}: {msg['content']}")
-        prompt = "\n".join(prompt_lines)
+        prompt = MEMORY_SUMMARY_PROMPT_TMPL.format(dialog_content="\n".join(prompt_lines))
 
         try:
             response = self._summary_client.chat.completions.create(
@@ -490,6 +522,7 @@ class MemoryManager:
         """
         tid = self._resolve_thread_id(thread_id)
         with self._lock:
+            self._archive_and_clear_if_cross_day(tid)
             _ = self._load_state_from_store(tid)
             total = self._estimate_tokens(self.summary)
             total += self._history_token_estimate()
@@ -545,6 +578,7 @@ class MemoryManager:
     def get_context(self, thread_id: str | None = None) -> list[dict[str, str]]:
         tid = self._resolve_thread_id(thread_id)
         with self._lock:
+            self._archive_and_clear_if_cross_day(tid)
             _ = self._load_state_from_store(tid)
             context: list[dict[str, str]] = []
             if self.summary:
