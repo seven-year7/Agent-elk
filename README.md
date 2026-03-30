@@ -23,7 +23,7 @@
 
 ## 3. 架构设计图 (4-Layer Model)
 
-![image-20260330133014062](C:\Users\25513\AppData\Roaming\Typora\typora-user-images\image-20260330133014062.png)
+![](https://github.com/seven-year7/Agent-elk/blob/main/image-20260330133014062.png)
 
 ### 3.1 感知层 (Perception)
 - **数据源：** 应用日志、系统指标 (Metrics)、链路追踪 (Tracing)。
