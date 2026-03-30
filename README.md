@@ -10,18 +10,20 @@
 
 ---
 
-## 2. 技术选型 (Stack, 与当前代码对齐)
+## 2. 技术选型 
 | 组件           | 选型                            | 作用                                    |
 | :------------- | :------------------------------ | :-------------------------------------- |
 | **推理大脑**   | OpenAI SDK + OpenRouter/OpenAI 兼容接口 | 逻辑推理、工具选择、诊断输出 |
 | **存储/检索**  | Elasticsearch 8.10+             | 日志检索、知识库 BM25+向量混合检索 (RRF+MMR) |
 | **Agent 编排** | 自研 ToolCallingOrchestrator    | `tool_choice="auto"` 多轮工具调用与回喂 |
-| **向量模型**   | OpenRouter 路由 `openai/text-embedding-3-small`（或同维替代） | 日志语义向量化（OpenAI 兼容 Embeddings API） |
 | **语言/环境**  | Python 3.10+                    | 核心开发语言                            |
+| **其他** | Redis | 存储短期记忆 |
 
 ---
 
 ## 3. 架构设计图 (4-Layer Model)
+
+![image-20260330133014062](C:\Users\25513\AppData\Roaming\Typora\typora-user-images\image-20260330133014062.png)
 
 ### 3.1 感知层 (Perception)
 - **数据源：** 应用日志、系统指标 (Metrics)、链路追踪 (Tracing)。
@@ -58,7 +60,6 @@
 
 ### 阶段三：预测与预防 (Ops-Agent)
 * **任务：** 结合历史数据进行异常检测（Anomaly Detection）。
-* **关键点：** 使用 ES 的机器学习 API 或 LLM 趋势分析。
 
 ---
 
